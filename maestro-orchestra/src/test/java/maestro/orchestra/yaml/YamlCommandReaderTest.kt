@@ -418,7 +418,7 @@ internal class YamlCommandReaderTest {
                 label = "Run around the north pole"
             ),
             WaitForAnimationToEndCommand(
-                timeout = 4000,
+                timeout = "4000",
                 label = "Wait for the thing to stop spinning"
             ),
             SwipeCommand(
@@ -825,6 +825,41 @@ internal class YamlCommandReaderTest {
         assertThat(error).hasMessageThat().contains("Unknown orientation: \${orientation}")
     }
 
+
+    @Test
+    fun `findUnknownWorkspaceConfigKeys returns empty for valid keys`() {
+        val config = """
+            flows:
+              - "*"
+            includeTags:
+              - smoke
+        """.trimIndent()
+        assertThat(YamlCommandReader.findUnknownWorkspaceConfigKeys(config)).isEmpty()
+    }
+
+    @Test
+    fun `findUnknownWorkspaceConfigKeys detects unknown keys`() {
+        val config = """
+            flows:
+              - "*"
+            tapOn: some button
+            invalidKey: true
+        """.trimIndent()
+        assertThat(YamlCommandReader.findUnknownWorkspaceConfigKeys(config))
+            .containsExactly("tapOn", "invalidKey")
+    }
+
+    @Test
+    fun `findUnknownWorkspaceConfigKeys returns null for malformed yaml`() {
+        val config = "not: valid: yaml: ["
+        assertThat(YamlCommandReader.findUnknownWorkspaceConfigKeys(config)).isNull()
+    }
+
+    @Test
+    fun `findUnknownWorkspaceConfigKeys returns null for non-map yaml`() {
+        val config = "- launchApp"
+        assertThat(YamlCommandReader.findUnknownWorkspaceConfigKeys(config)).isNull()
+    }
 
     private fun commands(vararg commands: Command): List<MaestroCommand> =
         commands.map(::MaestroCommand).toList()
