@@ -1,5 +1,5 @@
 # Changelog
-# Adding this just to trigger pipelines on pr checks
+# Adding this just to trigger pipelines on pr checks - not to merge this
 ## Unreleased
 
 ## 2.4.0
