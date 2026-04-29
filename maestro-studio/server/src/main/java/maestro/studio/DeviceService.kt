@@ -206,7 +206,7 @@ object DeviceService {
         val tree: TreeNode
         val screenshotFile: File
         synchronized(DeviceService) {
-            tree = maestro.viewHierarchy().root
+            tree = runBlocking { maestro.viewHierarchy() }.root
             lastViewHierarchy = tree
             screenshotFile = takeScreenshot(maestro)
             savedScreenshots.add(screenshotFile)
@@ -215,7 +215,8 @@ object DeviceService {
             }
         }
 
-        val deviceInfo = maestro.deviceInfo()
+        @Suppress("DEPRECATION")
+        val deviceInfo = runBlocking { maestro.deviceInfo() }
         val deviceWidth = deviceInfo.widthGrid
         val deviceHeight = deviceInfo.heightGrid
 
@@ -254,7 +255,7 @@ object DeviceService {
         val screenshotFile = SCREENSHOT_DIR.resolve(name).toFile()
         screenshotFile.deleteOnExit()
         try {
-            maestro.takeScreenshot(screenshotFile, true)
+            runBlocking { maestro.takeScreenshot(screenshotFile, true) }
         } catch (ignore: Exception) {
             // ignore intermittent screenshot errors
         }
