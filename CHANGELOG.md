@@ -1,7 +1,7 @@
 # Changelog
 
 ## Unreleased
-## Unreleased 2
+## Unreleased
 
 ## 2.4.0
 
