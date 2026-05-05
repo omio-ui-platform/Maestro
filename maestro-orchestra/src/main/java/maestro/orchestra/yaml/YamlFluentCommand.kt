@@ -895,10 +895,27 @@ data class YamlFluentCommand(
             )
 
             is YamlCoordinateSwipe -> {
+                val start = swipe.start
+                val end = swipe.end
+                val startPoint: Point?
+                val endPoint: Point?
+
+                val startPoints = start.split(",")
+                    .map {
+                        it.trim().toInt()
+                    }
+                startPoint = Point(startPoints[0], startPoints[1])
+
+                val endPoints = end.split(",")
+                    .map {
+                        it.trim().toInt()
+                    }
+                endPoint = Point(endPoints[0], endPoints[1])
+
                 return MaestroCommand(
                     SwipeCommand(
-                        start = swipe.start,
-                        end = swipe.end,
+                        startPoint = startPoint,
+                        endPoint = endPoint,
                         duration = swipe.duration,
                         label = swipe.label,
                         optional = swipe.optional,

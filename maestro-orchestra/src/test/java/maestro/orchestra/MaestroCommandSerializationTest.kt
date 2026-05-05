@@ -200,8 +200,8 @@ internal class MaestroCommandSerializationTest {
         // given
         val command = MaestroCommand(
             SwipeCommand(
-                start = "10, 10",
-                end = "100, 100",
+                startPoint = Point(10, 10),
+                endPoint = Point(100, 100),
             )
         )
 
@@ -647,7 +647,7 @@ internal class MaestroCommandSerializationTest {
     fun `serialize WaitForAnimationToEndCommand`() {
         // given
         val command = MaestroCommand(
-            WaitForAnimationToEndCommand(timeout = 9)
+            WaitForAnimationToEndCommand(timeout = "9")
         )
 
         // when
@@ -659,7 +659,7 @@ internal class MaestroCommandSerializationTest {
         val expectedJson = """
             {
               "waitForAnimationToEndCommand" : {
-                "timeout" : 9,
+                "timeout" : "9",
                 "optional" : false
               }
             }

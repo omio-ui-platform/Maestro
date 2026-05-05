@@ -19,8 +19,10 @@
 
 package maestro.orchestra
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import ImageConcatenate
+import kotlinx.coroutines.yield
 import com.github.romankh3.image.comparison.ImageComparison
 import com.github.romankh3.image.comparison.model.ImageComparisonState
 import kotlinx.coroutines.delay
@@ -194,16 +196,22 @@ class Orchestra(
                     screenRecording?.close()
                 }
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Throwable) {
             exception = e
         } finally {
-            val onCompleteSuccess = config?.onFlowComplete?.commands?.let {
-                executeCommands(
-                    commands = it,
-                    config = config,
-                    shouldReinitJsEngine = false,
-                )
-            } ?: true
+            val onCompleteSuccess = if (currentCoroutineContext().isActive) {
+                config?.onFlowComplete?.commands?.let {
+                    executeCommands(
+                        commands = it,
+                        config = config,
+                        shouldReinitJsEngine = false,
+                    )
+                } ?: true
+            } else {
+                true
+            }
 
             jsEngine.close()
 
@@ -254,19 +262,12 @@ class Orchestra(
             initJsEngine(config)
         }
 
-        if (!currentCoroutineContext().isActive) {
-            logger.info("Flow cancelled, skipping initAndroidChromeDevTools...")
-        } else {
-            initAndroidChromeDevTools(config)
-        }
+        yield()
+        initAndroidChromeDevTools(config)
 
         commands
             .forEachIndexed { index, command ->
-                if (!currentCoroutineContext().isActive) {
-                    logger.info("[Command execution] Command skipped due to cancellation: $command")
-                    onCommandSkipped(index, command)
-                    return@forEachIndexed
-                }
+                yield()
 
                 // Check for pause before executing each command
                 flowController.waitIfPaused()
@@ -318,6 +319,8 @@ class Orchestra(
                     logger.info("[Command execution] CommandSkipped: ${ignored.message}")
                     // Swallow exception
                     onCommandSkipped(index, command)
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Throwable) {
                     logger.error("[Command execution] CommandFailed: ${e.message}")
                     val errorResolution = onCommandFailed(index, command, e)
@@ -340,7 +343,7 @@ class Orchestra(
         jsEngine = jsEngineFactory(config)
     }
 
-    private fun initAndroidChromeDevTools(config: MaestroConfig?) {
+    private suspend fun initAndroidChromeDevTools(config: MaestroConfig?) {
         if (config == null) return
         val shouldEnableAndroidChromeDevTools = config.ext["androidWebViewHierarchy"] == "devtools"
         maestro.setAndroidChromeDevToolsEnabled(shouldEnableAndroidChromeDevTools)
@@ -362,10 +365,6 @@ class Orchestra(
      */
     private suspend fun executeCommand(maestroCommand: MaestroCommand, config: MaestroConfig?): Boolean {
         val command = maestroCommand.asCommand()
-
-        if (!currentCoroutineContext().isActive) {
-            throw CommandSkipped
-        }
 
         flowController.waitIfPaused()
 
@@ -434,7 +433,7 @@ class Orchestra(
         }
     }
 
-    private fun setAirplaneMode(command: SetAirplaneModeCommand): Boolean {
+    private suspend fun setAirplaneMode(command: SetAirplaneModeCommand): Boolean {
         when (command.value) {
             AirplaneValue.Enable -> maestro.setAirplaneModeState(true)
             AirplaneValue.Disable -> maestro.setAirplaneModeState(false)
@@ -443,12 +442,12 @@ class Orchestra(
         return true
     }
 
-    private fun toggleAirplaneMode(): Boolean {
+    private suspend fun toggleAirplaneMode(): Boolean {
         maestro.setAirplaneModeState(!maestro.isAirplaneModeEnabled())
         return true
     }
 
-    private fun travelCommand(command: TravelCommand): Boolean {
+    private suspend fun travelCommand(command: TravelCommand): Boolean {
         Traveller.travel(
             maestro = maestro,
             points = command.points,
@@ -458,7 +457,7 @@ class Orchestra(
         return true
     }
 
-    private fun addMediaCommand(mediaPaths: List<String>): Boolean {
+    private suspend fun addMediaCommand(mediaPaths: List<String>): Boolean {
         maestro.addMedia(mediaPaths)
         return true
     }
@@ -874,7 +873,7 @@ class Orchestra(
         }
     }
 
-    private fun waitForAnimationToEndCommand(command: WaitForAnimationToEndCommand): Boolean {
+    private suspend fun waitForAnimationToEndCommand(command: WaitForAnimationToEndCommand): Boolean {
         maestro.waitForAnimationToEnd(command.timeout)
 
         return true
@@ -888,19 +887,19 @@ class Orchestra(
         return false
     }
 
-    private fun setLocationCommand(command: SetLocationCommand): Boolean {
+    private suspend fun setLocationCommand(command: SetLocationCommand): Boolean {
         maestro.setLocation(command.latitude, command.longitude)
 
         return true
     }
 
-    private fun setOrientationCommand(command: SetOrientationCommand): Boolean {
+    private suspend fun setOrientationCommand(command: SetOrientationCommand): Boolean {
         maestro.setOrientation(command.resolvedOrientation())
 
         return true
     }
 
-    private fun clearAppStateCommand(command: ClearStateCommand): Boolean {
+    private suspend fun clearAppStateCommand(command: ClearStateCommand): Boolean {
         maestro.clearAppState(command.appId)
         // Android's clear command also resets permissions
         // Reset all permissions to unset so both platforms behave the same
@@ -909,24 +908,24 @@ class Orchestra(
         return true
     }
 
-    private fun stopAppCommand(command: StopAppCommand): Boolean {
+    private suspend fun stopAppCommand(command: StopAppCommand): Boolean {
         maestro.stopApp(command.appId)
 
         return true
     }
 
-    private fun killAppCommand(command: KillAppCommand): Boolean {
+    private suspend fun killAppCommand(command: KillAppCommand): Boolean {
         maestro.killApp(command.appId)
 
         return true
     }
 
-    private fun scrollVerticalCommand(): Boolean {
+    private suspend fun scrollVerticalCommand(): Boolean {
         maestro.scrollVertical()
         return true
     }
 
-    private fun scrollUntilVisible(command: ScrollUntilVisibleCommand): Boolean {
+    private suspend fun scrollUntilVisible(command: ScrollUntilVisibleCommand): Boolean {
         val endTime = System.currentTimeMillis() + command.timeout.toLong()
         val direction = command.direction.toSwipeDirection()
         val deviceInfo = maestro.deviceInfo()
@@ -935,6 +934,7 @@ class Orchestra(
         val maxRetryCenterCount = 4 // for when the list is no longer scrollable (last element) but the element is visible
 
         do {
+            yield()
             try {
                 val element = findElement(command.selector, command.optional, 500).element
                 val visibility = element.getVisiblePercentage(deviceInfo.widthGrid, deviceInfo.heightGrid)
@@ -1000,7 +1000,7 @@ class Orchestra(
         )
     }
 
-    private fun hideKeyboardCommand(): Boolean {
+    private suspend fun hideKeyboardCommand(): Boolean {
         maestro.hideKeyboard()
 
         // Throw error in case keyboard is still visible
@@ -1019,7 +1019,7 @@ class Orchestra(
         return true
     }
 
-    private fun backPressCommand(): Boolean {
+    private suspend fun backPressCommand(): Boolean {
         maestro.backPress()
         return true
     }
@@ -1035,13 +1035,14 @@ class Orchestra(
 
         var mutating = false
 
-        val checkCondition: suspend () -> Boolean = {
-            command.condition
+        suspend fun checkCondition(): Boolean {
+            return command.condition
                 ?.evaluateScripts(jsEngine)
                 ?.let { evaluateCondition(it, commandOptional = command.optional) } != false
         }
 
-        while (checkCondition() && counter < maxRuns && currentCoroutineContext().isActive) {
+        while (checkCondition() && counter < maxRuns) {
+            yield()
             if (counter > 0) {
                 command.commands.forEach { resetCommand(it) }
             }
@@ -1066,11 +1067,14 @@ class Orchestra(
     private suspend fun retryCommand(command: RetryCommand, config: MaestroConfig?): Boolean {
         val maxRetries = (command.maxRetries?.toIntOrNull() ?: 1).coerceAtMost(MAX_RETRIES_ALLOWED)
 
+        // Retry is intended for flaky test-level failures — element not found, assertion
+        // failures, etc. — which all surface as MaestroException. Anything else (driver
+        // transport failures, JS evaluation bugs, CancellationException) propagates naturally.
         var attempt = 0
         while (attempt <= maxRetries) {
             try {
                 return runSubFlow(command.commands, config, command.config)
-            } catch (exception: Throwable) {
+            } catch (exception: MaestroException) {
                 if (attempt == maxRetries) {
                     logger.error("Max retries ($maxRetries) reached. Commands failed.", exception)
                     throw exception
@@ -1177,16 +1181,14 @@ class Orchestra(
         }
 
         condition.notVisible?.let {
-            val result = MaestroTimer.withTimeout(adjustedToLatestInteraction(timeoutMs ?: optionalLookupTimeoutMs)) {
+            val disappeared = MaestroTimer.withTimeoutSuspend(adjustedToLatestInteraction(timeoutMs ?: optionalLookupTimeoutMs)) {
                 try {
                     findElement(
                         selector = it,
                         timeoutMs = 500L,
                         optional = commandOptional,
                     )
-
-                    // If we got to that point, the element is still visible.
-                    // Returning null to keep waiting.
+                    // Element is still visible
                     null
                 } catch (ignored: MaestroException.ElementNotFound) {
                     // Element was not visible, as we expected
@@ -1194,8 +1196,7 @@ class Orchestra(
                 }
             }
 
-            // Element was actually visible
-            if (result != true) {
+            if (disappeared != true) {
                 return false
             }
         }
@@ -1209,6 +1210,7 @@ class Orchestra(
         return try {
             commands
                 .mapIndexed { index, command ->
+                    yield()
                     onCommandStart(index, command)
 
                     val evaluatedCommand = command.evaluateScripts(jsEngine)
@@ -1241,6 +1243,8 @@ class Orchestra(
                         logger.info("[Command execution subflow] CommandSkipped: ${ignored.message}")
                         onCommandSkipped(index, command)
                         false
+                    } catch (e: CancellationException) {
+                        throw e
                     } catch (e: Throwable) {
                         when (onCommandFailed(index, command, e)) {
                             ErrorResolution.FAIL -> throw e
@@ -1279,12 +1283,18 @@ class Orchestra(
                 if (onStartSuccess) {
                     flowSuccess = executeSubflowCommands(filteredCommands, config)
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 throw e
             } finally {
-                onCompleteSuccess = subflowConfig?.onFlowComplete?.commands?.let {
-                    executeSubflowCommands(it, config)
-                } ?: true
+                onCompleteSuccess = if (currentCoroutineContext().isActive) {
+                    subflowConfig?.onFlowComplete?.commands?.let {
+                        executeSubflowCommands(it, config)
+                    } ?: true
+                } else {
+                    true
+                }
             }
             onCompleteSuccess && flowSuccess
         } finally {
@@ -1292,7 +1302,7 @@ class Orchestra(
         }
     }
 
-    private fun takeScreenshotCommand(command: TakeScreenshotCommand): Boolean {
+    private suspend fun takeScreenshotCommand(command: TakeScreenshotCommand): Boolean {
         val pathStr = command.path + ".png"
         val fileSink = getFileSink(screenshotsDir, pathStr)
 
@@ -1314,7 +1324,7 @@ class Orchestra(
         return false
     }
 
-    private fun startRecordingCommand(command: StartRecordingCommand): Boolean {
+    private suspend fun startRecordingCommand(command: StartRecordingCommand): Boolean {
         val pathStr = command.path + ".mp4"
         val fileSink = getFileSink(screenshotsDir, pathStr)
         screenRecording = maestro.startScreenRecording(fileSink)
@@ -1326,7 +1336,7 @@ class Orchestra(
         return false
     }
 
-    private fun eraseTextCommand(command: EraseTextCommand): Boolean {
+    private suspend fun eraseTextCommand(command: EraseTextCommand): Boolean {
         val charactersToErase = command.charactersToErase
         maestro.eraseText(charactersToErase ?: MAX_ERASE_CHARACTERS)
         maestro.waitForAppToSettle()
@@ -1334,19 +1344,19 @@ class Orchestra(
         return true
     }
 
-    private fun pressKeyCommand(command: PressKeyCommand): Boolean {
+    private suspend fun pressKeyCommand(command: PressKeyCommand): Boolean {
         maestro.pressKey(command.code)
 
         return true
     }
 
-    private fun openLinkCommand(command: OpenLinkCommand, config: MaestroConfig?): Boolean {
+    private suspend fun openLinkCommand(command: OpenLinkCommand, config: MaestroConfig?): Boolean {
         maestro.openLink(command.link, config?.appId, command.autoVerify ?: false, command.browser ?: false)
 
         return true
     }
 
-    private fun launchAppCommand(command: LaunchAppCommand): Boolean {
+    private suspend fun launchAppCommand(command: LaunchAppCommand): Boolean {
         try {
             if (command.clearKeychain == true) {
                 maestro.clearKeychain()
@@ -1382,7 +1392,7 @@ class Orchestra(
         return true
     }
 
-    private fun setPermissionsCommand(command: SetPermissionsCommand): Boolean {
+    private suspend fun setPermissionsCommand(command: SetPermissionsCommand): Boolean {
         try {
             maestro.setPermissions(command.appId, command.permissions)
         } catch (e: Exception) {
@@ -1392,13 +1402,13 @@ class Orchestra(
         return true
     }
 
-    private fun clearKeychainCommand(): Boolean {
+    private suspend fun clearKeychainCommand(): Boolean {
         maestro.clearKeychain()
 
         return true
     }
 
-    private fun inputTextCommand(command: InputTextCommand): Boolean {
+    private suspend fun inputTextCommand(command: InputTextCommand): Boolean {
         if (!maestro.isUnicodeInputSupported()) {
             val isAscii = Charsets.US_ASCII.newEncoder()
                 .canEncode(command.text)
@@ -1413,7 +1423,7 @@ class Orchestra(
         return true
     }
 
-    private fun inputTextRandomCommand(command: InputRandomCommand): Boolean {
+    private suspend fun inputTextRandomCommand(command: InputRandomCommand): Boolean {
         inputTextCommand(InputTextCommand(text = command.genRandomString()))
 
         return true
@@ -1425,7 +1435,7 @@ class Orchestra(
         )
     }
 
-    private fun assertVisualCommand(command: AssertVisualCommand): Boolean {
+    private suspend fun assertVisualCommand(command: AssertVisualCommand): Boolean {
         val baseline = command.baseline + ".png"
 
         val actual = screenshotsDir
@@ -1482,7 +1492,7 @@ class Orchestra(
         return false
     }
 
-    private fun tapOnElement(
+    private suspend fun tapOnElement(
         command: TapOnElementCommand,
         retryIfNoChange: Boolean,
         waitUntilVisible: Boolean,
@@ -1521,7 +1531,7 @@ class Orchestra(
         return true
     }
 
-    private fun tapOnPoint(
+    private suspend fun tapOnPoint(
         command: TapOnPointCommand,
         retryIfNoChange: Boolean,
     ): Boolean {
@@ -1536,7 +1546,7 @@ class Orchestra(
         return true
     }
 
-    private fun tapOnPointV2Command(
+    private suspend fun tapOnPointV2Command(
         command: TapOnPointV2Command,
     ): Boolean {
         val point = command.point
@@ -1579,7 +1589,7 @@ class Orchestra(
     }
 
 
-    private fun findElement(
+    private suspend fun findElement(
         selector: ElementSelector,
         optional: Boolean,
         timeoutMs: Long? = null,
@@ -1634,7 +1644,7 @@ class Orchestra(
         )
     }
 
-    private fun findElementViewHierarchy(
+    private suspend fun findElementViewHierarchy(
         selector: ElementSelector?,
         timeout: Long
     ): ViewHierarchy {
@@ -1811,13 +1821,13 @@ class Orchestra(
         )
     }
 
-    private fun swipeCommand(command: SwipeCommand): Boolean {
+    private suspend fun swipeCommand(command: SwipeCommand): Boolean {
         val elementSelector = command.elementSelector
         val direction = command.direction
         val startRelative = command.startRelative
         val endRelative = command.endRelative
-        val start = command.start
-        val end = command.end
+        val start = command.startPoint
+        val end = command.endPoint
         when {
             elementSelector != null && direction != null -> {
                 val uiElement = findElement(elementSelector, optional = command.optional)
@@ -1844,23 +1854,12 @@ class Orchestra(
                 waitToSettleTimeoutMs = command.waitToSettleTimeoutMs
             )
 
-            start != null && end != null -> {
-                if(start.contains("%") || end.contains("%")){
-                    maestro.swipe(
-                        startRelative = start,
-                        endRelative = end,
-                        duration = command.duration,
-                        waitToSettleTimeoutMs = command.waitToSettleTimeoutMs
-                    )
-                } else {
-                    maestro.swipe(
-                        start = start,
-                        end = end,
-                        duration = command.duration,
-                        waitToSettleTimeoutMs = command.waitToSettleTimeoutMs
-                    )
-                }
-            }
+            start != null && end != null -> maestro.swipe(
+                startPoint = start,
+                endPoint = end,
+                duration = command.duration,
+                waitToSettleTimeoutMs = command.waitToSettleTimeoutMs
+            )
 
             else -> error("Illegal arguments for swiping")
         }
@@ -1872,7 +1871,7 @@ class Orchestra(
         timeMs - (System.currentTimeMillis() - timeMsOfLastInteraction),
     )
 
-    private fun copyTextFromCommand(command: CopyTextFromCommand): Boolean {
+    private suspend fun copyTextFromCommand(command: CopyTextFromCommand): Boolean {
         val result = findElement(command.selector, optional = command.optional)
         copiedText = resolveText(result.element.treeNode.attributes)
             ?: throw MaestroException.UnableToCopyTextFromElement("Element does not contain text to copy: ${result.element}")
@@ -1899,7 +1898,7 @@ class Orchestra(
         }
     }
 
-    private fun pasteText(): Boolean {
+    private suspend fun pasteText(): Boolean {
         copiedText?.let { maestro.inputText(it) }
         return true
     }
