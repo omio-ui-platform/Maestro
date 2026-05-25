@@ -19,6 +19,7 @@
 
 package maestro.orchestra
 
+import com.fasterxml.jackson.annotation.JsonIgnore
 import maestro.js.JsEngine
 
 /**
@@ -76,6 +77,8 @@ data class MaestroCommand(
     val setAirplaneModeCommand: SetAirplaneModeCommand? = null,
     val toggleAirplaneModeCommand: ToggleAirplaneModeCommand? = null,
     val retryCommand: RetryCommand? = null,
+    // @JsonIgnore: serializing would duplicate the full origin YAML on every command in the DB.
+    @JsonIgnore val sourceInfo: SourceInfo? = null,
 ) {
 
     constructor(command: Command) : this(
@@ -195,7 +198,7 @@ data class MaestroCommand(
 
     fun evaluateScripts(jsEngine: JsEngine): MaestroCommand {
         return asCommand()
-            ?.let { MaestroCommand(it.evaluateScripts(jsEngine)) }
+            ?.let { MaestroCommand(it.evaluateScripts(jsEngine)).copy(sourceInfo = sourceInfo) }
             ?: MaestroCommand()
     }
 
@@ -212,4 +215,13 @@ data class MaestroCommand(
     fun yamlString(): String {
         return asCommand()?.yamlString() ?: "UNKNOWN"
     }
+
+    // Excludes sourceInfo so structurally-identical commands from different YAML positions compare equal.
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is MaestroCommand) return false
+        return asCommand() == other.asCommand()
+    }
+
+    override fun hashCode(): Int = asCommand()?.hashCode() ?: 0
 }

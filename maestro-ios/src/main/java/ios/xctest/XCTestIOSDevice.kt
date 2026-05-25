@@ -264,14 +264,14 @@ class XCTestIOSDevice(
             )
         } catch (timeout: XCUITestServerError.OperationTimeout) {
             throw IOSDeviceErrors.OperationTimeout(timeout.errorResponse)
+        } catch (unreachable: XCUITestServerError.Unreachable) {
+            throw IOSDeviceErrors.Unreachable(unreachable.callName, unreachable)
         } catch (e: Exception) {
-            // Check if runner crashed by testing if channel is still alive
             if (!client.isChannelAlive() && restartAttempts < MAX_RESTART_ATTEMPTS) {
                 logger.error("XCTest runner appears to have crashed or become unresponsive. Attempting restart ${restartAttempts + 1}/$MAX_RESTART_ATTEMPTS...")
                 try {
                     client.restartXCTestRunner()
                     logger.info("XCTest runner restarted successfully. Retrying operation...")
-                    // Retry the operation with incremented attempt counter
                     return executeWithRetry(call, restartAttempts + 1)
                 } catch (restartError: Exception) {
                     logger.error("Failed to restart XCTest runner", restartError)
