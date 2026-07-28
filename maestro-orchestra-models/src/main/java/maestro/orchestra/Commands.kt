@@ -759,7 +759,7 @@ data class ExtractTextWithAICommand(
 
 data class AssertScreenshotCommand(
     val path: String,
-    val thresholdPercentage: Double,
+    val thresholdPercentage: String,
     val cropOn: ElementSelector? = null,
     override val optional: Boolean = false,
     override val label: String? = null,
@@ -788,6 +788,7 @@ data class AssertScreenshotCommand(
     override fun evaluateScripts(jsEngine: JsEngine): Command {
         return copy(
             path = path.evaluateScripts(jsEngine),
+            thresholdPercentage = thresholdPercentage.evaluateScripts(jsEngine),
             cropOn = cropOn?.evaluateScripts(jsEngine)
         )
     }
@@ -878,6 +879,9 @@ data class LaunchAppCommand(
     override fun evaluateScripts(jsEngine: JsEngine): LaunchAppCommand {
         return copy(
             appId = appId.evaluateScripts(jsEngine),
+            permissions = permissions?.entries?.associate {
+                it.key.evaluateScripts(jsEngine) to it.value.evaluateScripts(jsEngine)
+            },
             launchArguments = launchArguments?.entries?.associate {
                 val value = it.value
                 it.key.evaluateScripts(jsEngine) to if (value is String) value.evaluateScripts(jsEngine) else it.value
@@ -911,6 +915,9 @@ data class SetPermissionsCommand(
     override fun evaluateScripts(jsEngine: JsEngine): SetPermissionsCommand {
         return copy(
             appId = appId.evaluateScripts(jsEngine),
+            permissions = permissions.entries.associate {
+                it.key.evaluateScripts(jsEngine) to it.value.evaluateScripts(jsEngine)
+            },
             label = label?.evaluateScripts(jsEngine)
         )
     }
