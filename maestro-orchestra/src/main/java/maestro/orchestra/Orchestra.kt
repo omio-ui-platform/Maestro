@@ -35,6 +35,14 @@ import maestro.*
 import maestro.Filters.asFilter
 import maestro.ai.AI
 import maestro.ai.AI.Companion.AI_KEY_ENV_VAR
+import maestro.FindElementResult
+import maestro.Maestro
+import maestro.DeviceConnectionException
+import maestro.MaestroException
+import maestro.Point
+import maestro.ScreenRecording
+import maestro.UiElement
+import maestro.ViewHierarchy
 import maestro.ai.cloud.Defect
 import maestro.ai.CloudAIPredictionEngine
 import maestro.ai.AIPredictionEngine
@@ -42,7 +50,13 @@ import maestro.ai.anthropic.Claude
 import maestro.ai.openai.OpenAI
 import maestro.js.GraalJsEngine
 import maestro.js.JsEngine
-import maestro.orchestra.error.UnicodeNotSupportedError
+import maestro.orchestra.ArtifactKind
+import maestro.orchestra.ArtifactManifest
+import maestro.orchestra.debug.ArtifactsGenerator
+import maestro.orchestra.debug.BundleLayout
+import maestro.orchestra.debug.CommandOutcome
+import maestro.orchestra.debug.FlowDebugOutput
+import maestro.orchestra.debug.OrchestraListener
 import maestro.orchestra.filter.FilterWithDescription
 import maestro.orchestra.filter.TraitFilters
 import maestro.orchestra.geo.Traveller
@@ -59,7 +73,6 @@ import maestro.utils.NoopInsights
 import maestro.utils.StringUtils.toRegexSafe
 import okhttp3.OkHttpClient
 import okio.Buffer
-import okio.BufferedSink
 import okio.Sink
 import okio.buffer
 import okio.sink
@@ -124,7 +137,12 @@ class DefaultFlowController : FlowController {
  */
 class Orchestra(
     private val maestro: Maestro,
-    private val screenshotsDir: Path? = null, // TODO(bartekpacia): Orchestra shouldn't interact with files directly.
+    private val artifactsDir: Path? = null,
+    // Persistent baseline location for the fork-only AssertVisualCommand; distinct from the
+    // per-run artifactsDir bundle. Fed from the user's testOutputDir when set.
+    private val screenshotsDir: Path? = null,
+    private val captureFullArtifacts: Boolean = false,
+    private val listeners: List<OrchestraListener> = emptyList(),
     private val lookupTimeoutMs: Long = 17000L,
     private val optionalLookupTimeoutMs: Long = 7000L,
     private val httpClient: OkHttpClient? = null,
@@ -137,6 +155,7 @@ class Orchestra(
     private val onCommandSkipped: (Int, MaestroCommand) -> Unit = { _, _ -> },
     private val onCommandReset: (MaestroCommand) -> Unit = {},
     private val onCommandMetadataUpdate: (MaestroCommand, CommandMetadata) -> Unit = { _, _ -> },
+    private val onStepScreenshotCaptured: (sequenceNumber: Int, relativePath: String) -> Unit = { _, _ -> },
     private val onCommandGeneratedOutput: (command: Command, defects: List<Defect>, screenshot: Buffer) -> Unit = { _, _, _ -> },
     private val AIPredictionEngine: AIPredictionEngine =  CloudAIPredictionEngine() ,
     private val flowController: FlowController = DefaultFlowController(),
@@ -164,7 +183,28 @@ class Orchestra(
 
     private val rawCommandToMetadata = mutableMapOf<MaestroCommand, CommandMetadata>()
 
-    suspend fun runFlow(commands: List<MaestroCommand>): Boolean {
+    // ArtifactsGenerator is always the first listener: it writes the bundle when
+    // artifactsDir is set and populates debugOutput either way.
+    private val artifactsGenerator: ArtifactsGenerator =
+        ArtifactsGenerator(artifactsDir, maestro, captureFullArtifacts, onStepScreenshotCaptured)
+    private val effectiveListeners: List<OrchestraListener> = listOf(artifactsGenerator) + listeners
+
+    private var commandSequenceCounter: Int = 0
+
+    // Dispatched to listeners as `depth`: 0 at the flow top, bumped inside each subflow.
+    private var subflowDepth: Int = 0
+
+    // Keyed by sequence number, not MaestroCommand: the latter has structural
+    // equality, so two identical commands would collide as map keys.
+    private val commandStartTimes = mutableMapOf<Int, Long>()
+
+    data class FlowResult(
+        val success: Boolean,
+        val debugOutput: FlowDebugOutput,
+        val artifactManifest: ArtifactManifest,
+    )
+
+    suspend fun runFlow(commands: List<MaestroCommand>): FlowResult {
         timeMsOfLastInteraction = System.currentTimeMillis()
 
         val config = YamlCommandReader.getConfig(commands)
@@ -173,14 +213,15 @@ class Orchestra(
         initAndroidChromeDevTools(config)
 
         onFlowStart(commands)
-
-        executeDefineVariablesCommands(commands, config)
-        // filter out DefineVariablesCommand to not execute it twice
-        val filteredCommands = commands.filter { it.asCommand() !is DefineVariablesCommand }
+        dispatch("onFlowStart") { it.onFlowStart() }
 
         var flowSuccess = false
         var exception: Throwable? = null
         try {
+            executeDefineVariablesCommands(commands, config)
+            // filter out DefineVariablesCommand to not execute it twice
+            val filteredCommands = commands.filter { it.asCommand() !is DefineVariablesCommand }
+
             val onStartSuccess = config?.onFlowStart?.commands?.let {
                 executeCommands(
                     commands = it,
@@ -206,11 +247,23 @@ class Orchestra(
         } finally {
             val onCompleteSuccess = if (currentCoroutineContext().isActive) {
                 config?.onFlowComplete?.commands?.let {
-                    executeCommands(
-                        commands = it,
-                        config = config,
-                        shouldReinitJsEngine = false,
-                    )
+                    try {
+                        executeCommands(
+                            commands = it,
+                            config = config,
+                            shouldReinitJsEngine = false,
+                        )
+                    } catch (e: CancellationException) {
+                        // The whole run is being killed (timeout/cancel), not a hook failure — propagate.
+                        throw e
+                    } catch (e: Throwable) {
+                        // Must not escape this `finally`: that skips onFlowEnd, where device logs are
+                        // collected and manifest.json written, so a failed run would ship no logs.
+                        // Still rethrown below (Case 109), unless the flow body already failed — that wins.
+                        logger.warn("onFlowComplete hook failed: ${e.message}")
+                        if (exception == null) exception = e
+                        false
+                    }
                 } ?: true
             } else {
                 true
@@ -218,9 +271,15 @@ class Orchestra(
 
             jsEngine.close()
 
+            dispatch("onFlowEnd") { it.onFlowEnd() }
+
             exception?.let { throw it }
 
-            return onCompleteSuccess && flowSuccess
+            return FlowResult(
+                success = onCompleteSuccess && flowSuccess,
+                debugOutput = artifactsGenerator.debugOutput,
+                artifactManifest = artifactsGenerator.artifactManifest,
+            )
         }
     }
 
@@ -276,6 +335,10 @@ class Orchestra(
                 flowController.waitIfPaused()
 
                 onCommandStart(index, command)
+                val sequenceNumber = commandSequenceCounter++
+                val startedAt = System.currentTimeMillis()
+                commandStartTimes[sequenceNumber] = startedAt
+                dispatch("onCommandStart") { it.onCommandStart(command, sequenceNumber, subflowDepth) }
 
                 jsEngine.onLogMessage { msg ->
                     val metadata = getMetadata(command)
@@ -306,6 +369,7 @@ class Orchestra(
                 try {
                     try {
                         executeCommand(evaluatedCommand, config)
+                        dispatchFinished(command, CommandOutcome.Completed, sequenceNumber)
                         onCommandComplete(index, command)
                     } catch (e: MaestroException) {
                         val isOptional =
@@ -317,15 +381,20 @@ class Orchestra(
                     logger.info("[Command execution] CommandWarned: ${ignored.message}")
                     // Swallow exception, but add a warning as an insight
                     insights.report(Insight(message = ignored.message, level = Insight.Level.WARNING))
+                    dispatchFinished(command, CommandOutcome.Warned, sequenceNumber)
                     onCommandWarned(index, command)
                 } catch (ignored: CommandSkipped) {
                     logger.info("[Command execution] CommandSkipped: ${ignored.message}")
                     // Swallow exception
+                    dispatchFinished(command, CommandOutcome.Skipped, sequenceNumber)
                     onCommandSkipped(index, command)
                 } catch (e: CancellationException) {
                     throw e
+                } catch (e: DeviceConnectionException) {
+                    throw e
                 } catch (e: Throwable) {
                     logger.error("[Command execution] CommandFailed: ${e.message}")
+                    dispatchFinished(command, CommandOutcome.Failed(e), sequenceNumber)
                     val errorResolution = onCommandFailed(index, command, e)
                     when (errorResolution) {
                         ErrorResolution.FAIL -> return false
@@ -502,6 +571,7 @@ class Orchestra(
         )
 
         if (defects.isNotEmpty()) {
+            dispatch("onAIArtifactGenerated") { it.onAIArtifactGenerated(imageData.copy(), defects.size) }
             onCommandGeneratedOutput(command, defects, imageData)
 
             val word = if (defects.size == 1) "defect" else "defects"
@@ -537,6 +607,7 @@ class Orchestra(
         )
 
         if (defect != null) {
+            dispatch("onAIArtifactGenerated") { it.onAIArtifactGenerated(imageData.copy(), 1) }
             onCommandGeneratedOutput(command, listOf(defect), imageData)
 
             val reasoning = "Assertion \"${command.assertion}\" failed:\n${defect.reasoning}"
@@ -763,11 +834,19 @@ class Orchestra(
     }
 
     private suspend fun assertScreenshotCommand(command: AssertScreenshotCommand): Boolean {
+        val thresholdPercentage = command.thresholdPercentage.toDoubleOrNull()
+            ?: throw MaestroException.AssertionFailure(
+                message = "Invalid thresholdPercentage for assertScreenshot: \"${command.thresholdPercentage}\". Expected a number.",
+                hierarchyRoot = maestro.viewHierarchy().root,
+                debugMessage = "The assertScreenshot thresholdPercentage must resolve to a number (e.g. 95). " +
+                    "If you are using a variable, make sure it evaluates to a numeric value."
+            )
+
         val path = normalizeScreenshotPath(command.path)
 
         val candidates = buildList {
             command.flowPath?.let { add(it.resolve(path).toFile()) }
-            screenshotsDir?.let { add(it.resolve(path).toFile()) }
+            artifactsDir?.let { add(it.resolve(BundleLayout.TAKE_SCREENSHOT_DIR).resolve(path).toFile()) }
             add(File(path))
         }.distinctBy { it.canonicalPath }
 
@@ -819,7 +898,7 @@ class Orchestra(
         val diffFileName = "${baseName}_diff.png"
         val diffFile = expectedFile.parentFile?.resolve(diffFileName) ?: File(diffFileName)
 
-        when (val result = ScreenshotMatch.compare(expectedImage, actualImage, command.thresholdPercentage, diffFile)) {
+        when (val result = ScreenshotMatch.compare(expectedImage, actualImage, thresholdPercentage, diffFile)) {
             is ScreenshotMatch.Result.Match -> return false // Screenshots are non-interactive
             is ScreenshotMatch.Result.SizeMismatch -> throw MaestroException.AssertionFailure(
                 message = "Screenshot size mismatch: ${command.description()} - expected ${result.expectedWidth}x${result.expectedHeight}, actual ${result.actualWidth}x${result.actualHeight}. Screenshots must have the same dimensions to compare.",
@@ -1084,6 +1163,7 @@ class Orchestra(
     private fun updateMetadata(rawCommand: MaestroCommand, metadata: CommandMetadata) {
         rawCommandToMetadata[rawCommand] = metadata
         onCommandMetadataUpdate(rawCommand, metadata)
+        dispatch("onCommandMetadataUpdate") { it.onCommandMetadataUpdate(rawCommand, metadata) }
     }
 
     private fun getMetadata(rawCommand: MaestroCommand) = rawCommandToMetadata.getOrPut(rawCommand) {
@@ -1091,12 +1171,39 @@ class Orchestra(
     }
 
     private fun resetCommand(command: MaestroCommand) {
+        dispatch("onCommandReset") { it.onCommandReset(command) }
         onCommandReset(command)
 
         (command.asCommand() as? CompositeCommand)?.let {
             it.subCommands().forEach { command ->
                 resetCommand(command)
             }
+        }
+    }
+
+    private fun dispatchFinished(
+        command: MaestroCommand,
+        outcome: CommandOutcome,
+        sequenceNumber: Int,
+    ) {
+        val finishedAt = System.currentTimeMillis()
+        val startedAt = commandStartTimes.remove(sequenceNumber) ?: finishedAt
+        dispatch("onCommandFinished") {
+            it.onCommandFinished(command, outcome, startedAt, finishedAt)
+        }
+    }
+
+    /** Dispatches [block] to every listener in isolation — a thrower is logged, the rest still fire. */
+    private inline fun dispatch(event: String, block: (OrchestraListener) -> Unit) {
+        effectiveListeners.forEach { listener ->
+            runCatching { block(listener) }
+                .onFailure { e ->
+                    logger.error(
+                        "OrchestraListener ${listener::class.simpleName} threw on $event — " +
+                            "flow continues, other listeners unaffected.",
+                        e,
+                    )
+                }
         }
     }
 
@@ -1196,12 +1303,17 @@ class Orchestra(
 
     private suspend fun executeSubflowCommands(commands: List<MaestroCommand>, config: MaestroConfig?): Boolean {
         jsEngine.enterScope()
+        subflowDepth++
 
         return try {
             commands
                 .mapIndexed { index, command ->
                     yield()
                     onCommandStart(index, command)
+                    val sequenceNumber = commandSequenceCounter++
+                    val startedAt = System.currentTimeMillis()
+                    commandStartTimes[sequenceNumber] = startedAt
+                    dispatch("onCommandStart") { it.onCommandStart(command, sequenceNumber, subflowDepth) }
 
                     val evaluatedCommand = command.evaluateScripts(jsEngine)
                     val metadata = getMetadata(command)
@@ -1214,6 +1326,7 @@ class Orchestra(
                         try {
                             executeCommand(evaluatedCommand, config)
                                 .also {
+                                    dispatchFinished(command, CommandOutcome.Completed, sequenceNumber)
                                     onCommandComplete(index, command)
                                 }
                         } catch (exception: MaestroException) {
@@ -1226,16 +1339,21 @@ class Orchestra(
                         // Swallow exception, but add a warning as an insight
                         logger.info("[Command execution subflow] CommandWarned: ${ignored.message}")
                         insights.report(Insight(message = ignored.message, level = Insight.Level.WARNING))
+                        dispatchFinished(command, CommandOutcome.Warned, sequenceNumber)
                         onCommandWarned(index, command)
                         false
                     } catch (ignored: CommandSkipped) {
                         // Swallow exception
                         logger.info("[Command execution subflow] CommandSkipped: ${ignored.message}")
+                        dispatchFinished(command, CommandOutcome.Skipped, sequenceNumber)
                         onCommandSkipped(index, command)
                         false
                     } catch (e: CancellationException) {
                         throw e
+                    } catch (e: DeviceConnectionException) {
+                        throw e
                     } catch (e: Throwable) {
+                        dispatchFinished(command, CommandOutcome.Failed(e), sequenceNumber)
                         when (onCommandFailed(index, command, e)) {
                             ErrorResolution.FAIL -> throw e
                             ErrorResolution.CONTINUE -> {
@@ -1247,6 +1365,7 @@ class Orchestra(
                 }
                 .any { it }
         } finally {
+            subflowDepth--
             jsEngine.leaveScope()
         }
     }
@@ -1293,8 +1412,10 @@ class Orchestra(
     }
 
     private suspend fun takeScreenshotCommand(command: TakeScreenshotCommand): Boolean {
-        val pathStr = command.path + ".png"
-        val fileSink = getFileSink(screenshotsDir, pathStr)
+        // Generator owns the bundle path and records the file; null means no bundle (write CWD-relative).
+        val outFile = artifactsGenerator.allocateCommandArtifact(ArtifactKind.TAKE_SCREENSHOT, "${command.path}.png")
+            ?: File("${command.path}.png")
+        val fileSink = outFile.apply { parentFile?.mkdirs() }.sink().buffer()
 
         val cropOn = command.cropOn
         if (cropOn == null) {
@@ -1315,9 +1436,10 @@ class Orchestra(
     }
 
     private suspend fun startRecordingCommand(command: StartRecordingCommand): Boolean {
-        val pathStr = command.path + ".mp4"
-        val fileSink = getFileSink(screenshotsDir, pathStr)
-        screenRecording = maestro.startScreenRecording(fileSink)
+        // Recorded at start; the file is finalized at stopRecording.
+        val outFile = artifactsGenerator.allocateCommandArtifact(ArtifactKind.START_SCREEN_RECORDING, "${command.path}.mp4")
+            ?: File("${command.path}.mp4")
+        screenRecording = maestro.startScreenRecording(outFile.apply { parentFile?.mkdirs() }.sink().buffer())
         return false
     }
 
@@ -1347,47 +1469,28 @@ class Orchestra(
     }
 
     private suspend fun launchAppCommand(command: LaunchAppCommand): Boolean {
-        try {
-            if (command.clearKeychain == true) {
-                maestro.clearKeychain()
-            }
-            if (command.clearState == true) {
-                maestro.clearAppState(command.appId)
-            }
-        } catch (e: Exception) {
-            logger.error("Failed to clear state", e)
-            throw MaestroException.UnableToClearState("Unable to clear state for app ${command.appId}: ${e.message}", e)
+        if (command.clearKeychain == true) {
+            maestro.clearKeychain()
+        }
+        if (command.clearState == true) {
+            maestro.clearAppState(command.appId)
         }
 
-        try {
-            // For testing convenience, default to allow all on app launch
-            val permissions = command.permissions ?: mapOf("all" to "allow")
-            maestro.setPermissions(command.appId, permissions)
-        } catch (e: Exception) {
-            logger.error("Failed to set permissions", e)
-            throw MaestroException.UnableToSetPermissions("Unable to set permissions for app ${command.appId}: ${e.message}", e)
-        }
+        // For testing convenience, default to allow all on app launch
+        val permissions = command.permissions ?: mapOf("all" to "allow")
+        maestro.setPermissions(command.appId, permissions)
 
-        try {
-            maestro.launchApp(
-                appId = command.appId,
-                launchArguments = command.launchArguments ?: emptyMap(),
-                stopIfRunning = command.stopApp ?: true
-            )
-        } catch (e: Exception) {
-            logger.error("Failed to launch app", e)
-            throw MaestroException.UnableToLaunchApp("Unable to launch app ${command.appId}", cause = e)
-        }
+        maestro.launchApp(
+            appId = command.appId,
+            launchArguments = command.launchArguments ?: emptyMap(),
+            stopIfRunning = command.stopApp ?: true
+        )
 
         return true
     }
 
     private suspend fun setPermissionsCommand(command: SetPermissionsCommand): Boolean {
-        try {
-            maestro.setPermissions(command.appId, command.permissions)
-        } catch (e: Exception) {
-            throw MaestroException.UnableToSetPermissions("Unable to set permissions for app ${command.appId}: ${e.message}", e)
-        }
+        maestro.setPermissions(command.appId, command.permissions)
 
         // Setting permissions occurs behind the scenes and won't alter screen state.
         // Android and iOS provide no mechanism for subscribing to permissions events.
@@ -1402,15 +1505,6 @@ class Orchestra(
     }
 
     private suspend fun inputTextCommand(command: InputTextCommand): Boolean {
-        if (!maestro.isUnicodeInputSupported()) {
-            val isAscii = Charsets.US_ASCII.newEncoder()
-                .canEncode(command.text)
-
-            if (!isAscii) {
-                throw UnicodeNotSupportedError(command.text)
-            }
-        }
-
         maestro.inputText(command.text)
 
         return true
@@ -1896,22 +1990,6 @@ class Orchestra(
     private suspend fun pasteText(): Boolean {
         copiedText?.let { maestro.inputText(it) }
         return true
-    }
-
-    private fun getFileSink(parentPath: Path?, filePathStr: String): BufferedSink {
-        // Work out relative v absolute input
-        val resolvedFile = parentPath?.resolve(filePathStr)?.toFile() ?: File(filePathStr)
-        val absoluteFile = resolvedFile.absoluteFile
-
-        if(absoluteFile.parentFile.exists() || absoluteFile.parentFile.mkdirs()) {
-            return resolvedFile
-                .sink()
-                .buffer()
-        } else {
-            throw MaestroException.DestinationIsNotWritable(
-                "Unable to create directory for file: ${absoluteFile.parentFile.absolutePath}"
-            )
-        }
     }
 
     private suspend fun executeDefineVariablesCommands(commands: List<MaestroCommand>, config: MaestroConfig?) {

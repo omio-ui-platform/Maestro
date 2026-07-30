@@ -256,9 +256,14 @@ class WebDriver(
     fun parseDomAsTreeNodes(domRepresentation: Map<String, Any>): TreeNode {
         val attrs = domRepresentation["attributes"] as Map<String, Any>
 
+        val bounds = when (val b = attrs["bounds"]) {
+            is String -> b
+            is Map<*, *> -> "[${b["left"]},${b["top"]}][${b["right"]},${b["bottom"]}]"
+            else -> "[0,0][0,0]"
+        }
         val attributes = mutableMapOf(
             "text" to attrs["text"] as String,
-            "bounds" to attrs["bounds"] as String,
+            "bounds" to bounds,
         )
         if (attrs.containsKey("resource-id") && attrs["resource-id"] != null) {
             attributes["resource-id"] = attrs["resource-id"] as String
@@ -292,7 +297,14 @@ class WebDriver(
 
                 driver.switchTo().window(newHandle)
 
-                webScreenRecorder?.onWindowChange()
+                try {
+                    webScreenRecorder?.onWindowChange()
+                } catch (e: Exception) {
+                    // Recording is best-effort and must never break hierarchy retrieval.
+                    LOGGER.warn("Screen recorder failed on window change, disabling recording", e)
+                    runCatching { webScreenRecorder?.close() }
+                    webScreenRecorder = null
+                }
             }
         }
     }
@@ -522,11 +534,14 @@ class WebDriver(
 
     override fun startScreenRecording(out: Sink): ScreenRecording {
         val driver = ensureOpen()
-        webScreenRecorder = WebScreenRecorder(
+        val recorder = WebScreenRecorder(
             JcodecVideoEncoder(),
             driver
         )
-        webScreenRecorder?.startScreenRecording(out)
+        // Assign only after a successful start: a half-initialized recorder left
+        // behind (e.g. no DevTools on Browserbase) would blow up in detectWindowChange().
+        recorder.startScreenRecording(out)
+        webScreenRecorder = recorder
 
         return object : ScreenRecording {
             override fun close() {
@@ -580,10 +595,6 @@ class WebDriver(
         return true
     }
 
-    override fun isUnicodeInputSupported(): Boolean {
-        return true
-    }
-
     override fun waitForAppToSettle(initialHierarchy: ViewHierarchy?, appId: String?, timeoutMs: Int?): ViewHierarchy {
         return ScreenshotUtils.waitForAppToSettle(initialHierarchy, this)
     }
@@ -624,7 +635,9 @@ class WebDriver(
     private fun queryCss(query: OnDeviceElementQuery.Css): List<TreeNode> {
         ensureOpen()
 
-        val jsResult: Any? = executeJS("return window.maestro.queryCss('${query.css}')")
+        // Encode the selector as a JS string literal so selectors containing quotes
+        val cssArg = jacksonObjectMapper().writeValueAsString(query.css)
+        val jsResult: Any? = executeJS("return window.maestro.queryCss($cssArg)")
 
         if (jsResult == null) {
             return emptyList()
@@ -693,9 +706,11 @@ class WebDriver(
         val iframeW = (params["viewportWidth"]  as? Number)?.toDouble() ?: 0.0
         val iframeH = (params["viewportHeight"] as? Number)?.toDouble() ?: 0.0
 
-        // ChromeDriver can execute scripts inside cross-origin iframes via switchTo().frame()
-        driver.switchTo().frame(iframeElement)
         return try {
+            // ChromeDriver can execute scripts inside cross-origin iframes via switchTo().frame().
+            // This can race with page mutation (iframe removed/replaced between findElement and
+            // switchTo), producing a StaleElementReferenceException — treat as a graceful skip.
+            driver.switchTo().frame(iframeElement)
             val resultJson = jsExecutor.executeScript("""
                 $maestroWebScript
                 window.maestro.viewportX = $iframeX;

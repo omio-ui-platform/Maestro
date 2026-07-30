@@ -20,3 +20,6 @@ local/
 .idea/
 CLAUDE.md
 .claude/
+
+# Ignore iOS intermediate build directory
+/driver-iPhoneSimulator/

@@ -151,7 +151,7 @@ class TestCommand : Callable<Int> {
 
     @Option(
         names = ["--test-output-dir"],
-        description = ["Configures the test output directory for screenshots and other test artifacts (note: this does NOT include debug output)"],
+        description = ["Directory for this run's artifacts — manifest.json, commands.json, logs/, takeScreenshot/, and startRecording/ written directly into it (overrides the default output location)"],
     )
     private var testOutputDir: String? = null
 
@@ -537,8 +537,8 @@ class TestCommand : Callable<Int> {
                         chunkPlans,
                         shardIndex,
                         debugOutputPath,
-                        testOutputDir,
                         deviceId,
+                        testOutputDir,
                     )
                 }
             } else {
@@ -554,11 +554,10 @@ class TestCommand : Callable<Int> {
                         env,
                         analyze,
                         authToken,
-                        testOutputDir,
                         deviceId,
                     )
                 } else {
-                    runSingleFlow(maestro, device, flowFile, debugOutputPath, testOutputDir, deviceId)
+                    runSingleFlow(maestro, device, flowFile, debugOutputPath, deviceId)
                 }
             }
         }
@@ -580,7 +579,6 @@ class TestCommand : Callable<Int> {
         device: Device?,
         flowFile: File,
         debugOutputPath: Path,
-        testOutputDir: Path?,
         deviceId: String?,
     ): Triple<Int, Int, Nothing?> {
         val resultView =
@@ -604,7 +602,6 @@ class TestCommand : Callable<Int> {
             debugOutputPath = debugOutputPath,
             analyze = analyze,
             apiKey = authToken,
-            testOutputDir = testOutputDir,
             deviceId = deviceId,
         )
         val duration = System.currentTimeMillis() - startTime
@@ -636,8 +633,8 @@ class TestCommand : Callable<Int> {
         chunkPlans: List<ExecutionPlan>,
         shardIndex: Int,
         debugOutputPath: Path,
-        testOutputDir: Path?,
         deviceId: String?,
+        testOutputDir: Path?,
     ): Triple<Int?, Int?, TestExecutionSummary> {
         val startTime = System.currentTimeMillis()
         val totalFlowCount = chunkPlans.sumOf { it.flowsToRun.size }
@@ -680,12 +677,13 @@ class TestCommand : Callable<Int> {
             buildNumber = buildNumber,
             deviceName = deviceName,
             captureSteps = format == ReportFormat.HTML_DETAILED,
+            captureFullArtifacts = analyze,
+            testOutputDir = testOutputDir,
         ).runTestSuite(
             executionPlan = chunkPlans[shardIndex],
             env = env,
             reportOut = null,
             debugOutputPath = debugOutputPath,
-            testOutputDir = testOutputDir,
             deviceId = deviceId,
         )
 
