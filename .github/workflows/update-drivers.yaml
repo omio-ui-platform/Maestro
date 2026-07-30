@@ -22,6 +22,9 @@ concurrency:
 
 jobs:
   changes:
+    # Fork guard: driver rebuild/push is upstream-only infra (needs the CI_BOT
+    # GitHub App secrets). Skip the whole workflow on forks.
+    if: github.repository == 'mobile-dev-inc/Maestro'
     runs-on: ubuntu-latest
     outputs:
       android: ${{ steps.dispatch.outputs.android || steps.filter.outputs.android }}
@@ -57,7 +60,7 @@ jobs:
   update-android-driver:
     name: Update Android Driver
     needs: changes
-    if: needs.changes.outputs.android == 'true'
+    if: needs.changes.outputs.android == 'true' && github.repository == 'mobile-dev-inc/Maestro'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -113,7 +116,7 @@ jobs:
   update-ios-driver:
     name: Update iOS Driver
     needs: changes
-    if: needs.changes.outputs.ios == 'true'
+    if: needs.changes.outputs.ios == 'true' && github.repository == 'mobile-dev-inc/Maestro'
     runs-on: macos-26
     timeout-minutes: 30
     permissions:
