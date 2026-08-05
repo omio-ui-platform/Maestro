@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ "$(basename "$PWD")" != "Maestro" ]; then
-	echo "This script must be run from the maestro root directory"
+# Verify we are at the maestro repo root by checking for the xctest-runner project,
+# not by assuming the checkout directory is named "Maestro". CI checks the repo out
+# into a differently-named workspace (e.g. build-e2e-tool), where the old name check
+# tripped and silently skipped the simulator driver build.
+if [ ! -e "./maestro-ios-xctest-runner/maestro-driver-ios.xcodeproj" ]; then
+	echo "This script must be run from the maestro root directory (maestro-ios-xctest-runner/maestro-driver-ios.xcodeproj not found)"
 	exit 1
 fi
 
