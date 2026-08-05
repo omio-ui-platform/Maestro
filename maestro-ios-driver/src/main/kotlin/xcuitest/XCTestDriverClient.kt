@@ -285,8 +285,10 @@ class XCTestDriverClient(
 
     private fun processResponse(response: Response, url: String): String {
         val responseBodyAsString = response.body?.bytes()?.let { bytes -> String(bytes) } ?: ""
-        logger.info("UIP - Processing response from URL: $url")
-        logger.info("UIP - Processed response: $responseBodyAsString")
+        // debug, not info: the response body is the full (often depth-50+) view hierarchy;
+        // logging it at info on every request produced ~580MB logs per shard and slowed runs.
+        logger.debug("UIP - Processing response from URL: $url")
+        logger.debug("UIP - Processed response: $responseBodyAsString")
         return if (!response.isSuccessful) {
             val code = response.code
             handleExceptions(code, url, responseBodyAsString)
