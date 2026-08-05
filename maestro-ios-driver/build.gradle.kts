@@ -74,6 +74,20 @@ tasks.register<Exec>("buildIosDriver") {
 
     workingDir = rootProject.projectDir
     commandLine("sh", "maestro-ios-xctest-runner/build-maestro-ios-runner-all.sh")
+
+    doLast {
+        val simulatorXctestrun = projectDir
+            .resolve("src/main/resources/driver-iPhoneSimulator")
+            .walkTopDown()
+            .firstOrNull { it.extension == "xctestrun" }
+        if (simulatorXctestrun == null) {
+            throw GradleException(
+                "iOS simulator driver build produced no .xctestrun under " +
+                    "src/main/resources/driver-iPhoneSimulator - refusing to package a broken " +
+                    "iOS driver (see buildIosDriver output above)."
+            )
+        }
+    }
 }
 
 tasks.named("processResources") {
