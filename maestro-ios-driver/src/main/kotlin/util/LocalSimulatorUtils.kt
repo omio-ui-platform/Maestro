@@ -287,6 +287,12 @@ class LocalSimulatorUtils(private val tempFileHandler: TempFileHandler) {
 
         // reinstall the app as that is the most stable way to clear state
         reinstallApp(deviceId, bundleId)
+
+        // Reinstalling clears the app's data container but NOT the iOS Keychain, so
+        // credentials / auth tokens (which RN apps persist in the Keychain) survive an app
+        // reinstall and leak into the next test (e.g. the app stays logged in). Reset the
+        // keychain too so clearState yields a genuinely brand-new app instance.
+        clearKeychain(deviceId)
     }
 
     private fun getAppBinaryDirectory(deviceId: String, bundleId: String): String {
