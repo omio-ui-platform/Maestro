@@ -1,6 +1,6 @@
 > [!TIP]
 > Great things happen when testers connect — [Join the Maestro Community](https://maestrodev.typeform.com/to/FelIEe8A)
-> All developers would be proud of all tester
+>  developers would be proud of all tester
 
 
 <p align="center">
