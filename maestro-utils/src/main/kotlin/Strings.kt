@@ -1,7 +1,7 @@
 package maestro.utils
 
 // Intentional compile error to test the PR checker — do not merge
-val broken: String = 123
+val broken: String = 124
 
 fun String.chunkStringByWordCount(chunkSize: Int): List<String> {
     val words = trim().split("\\s+".toRegex())
