@@ -78,6 +78,7 @@ class TestSuiteInteractor(
         var passed = true
         val aiOutputs = mutableListOf<FlowAIOutput>()
 
+        
         // first run sequence of flows if present
         val flowSequence = executionPlan.sequence
         for (flow in flowSequence.flows) {
