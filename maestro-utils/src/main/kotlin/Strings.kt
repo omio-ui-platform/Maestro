@@ -1,6 +1,8 @@
 package maestro.utils
 
 fun String.chunkStringByWordCount(chunkSize: Int): List<String> {
+
+    val broken: String = 123
     val words = trim().split("\\s+".toRegex())
     val chunkedStrings = mutableListOf<String>()
     var currentChunk = StringBuilder()
