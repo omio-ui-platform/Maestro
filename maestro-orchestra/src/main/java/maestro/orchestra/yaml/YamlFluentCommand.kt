@@ -75,6 +75,7 @@ import maestro.orchestra.TapOnPointV2Command
 import maestro.orchestra.ToggleAirplaneModeCommand
 import maestro.orchestra.TravelCommand
 import maestro.orchestra.WaitForAnimationToEndCommand
+import maestro.orchestra.SleepCommand
 import maestro.orchestra.error.InvalidFlowFile
 import maestro.orchestra.error.MediaFileNotFound
 import maestro.orchestra.error.SyntaxError
@@ -138,6 +139,7 @@ data class YamlFluentCommand(
     val setClipboard: YamlSetClipboard? = null,
     val runScript: YamlRunScript? = null,
     val waitForAnimationToEnd: YamlWaitForAnimationToEndCommand? = null,
+    val sleep: YamlSleep? = null,
     val evalScript: YamlEvalScript? = null,
     val scrollUntilVisible: YamlScrollUntilVisible? = null,
     val travel: YamlTravelCommand? = null,
@@ -464,6 +466,15 @@ data class YamlFluentCommand(
                         timeout = waitForAnimationToEnd.timeout,
                         label = waitForAnimationToEnd.label,
                         optional = waitForAnimationToEnd.optional,
+                    )
+                )
+            )
+            sleep != null -> listOf(
+                MaestroCommand(
+                    SleepCommand(
+                        seconds = sleep.seconds ?: SleepCommand.DEFAULT_SLEEP_SECONDS,
+                        label = sleep.label,
+                        optional = sleep.optional,
                     )
                 )
             )

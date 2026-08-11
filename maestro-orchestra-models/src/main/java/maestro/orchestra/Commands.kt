@@ -66,6 +66,29 @@ sealed interface CompositeCommand : Command {
     fun config(): MaestroConfig?
 }
 
+/**
+ * The lightest command there is: pauses flow execution for a fixed duration and nothing else.
+ * It never queries the view hierarchy or the device — it just delays. `seconds` defaults to 4.
+ */
+data class SleepCommand(
+    val seconds: Double = DEFAULT_SLEEP_SECONDS,
+    override val label: String? = null,
+    override val optional: Boolean = false,
+) : Command {
+
+    override val originalDescription: String
+        get() = "Sleep for $seconds seconds"
+
+    // No scripts to interpolate — the command is a plain, self-contained pause.
+    override fun evaluateScripts(jsEngine: JsEngine): Command = this
+
+    override fun yamlString(): String = "sleep\n"
+
+    companion object {
+        const val DEFAULT_SLEEP_SECONDS = 4.0
+    }
+}
+
 data class AssertVisualCommand(
     val baseline: String,
     val thresholdPercentage: Int,
