@@ -327,6 +327,7 @@ data class YamlFluentCommand(
                     "scroll" -> MaestroCommand(ScrollCommand())
                     "clearKeychain" -> MaestroCommand(ClearKeychainCommand())
                     "pasteText" -> MaestroCommand(PasteTextCommand())
+                    "sleep" -> MaestroCommand(SleepCommand())
                     else -> error("Unknown navigation target: $action")
                 }
             )
