@@ -164,6 +164,7 @@ private val stringCommands = mapOf<String, (YamlFluentCommand) -> YamlFluentComm
     "pasteText" to { it.copy(pasteText = YamlActionPasteText()) },
     "scroll" to { it.copy(scroll = YamlActionScroll()) },
     "waitForAnimationToEnd" to { it.copy(waitForAnimationToEnd = YamlWaitForAnimationToEndCommand(timeout = null)) },
+    "sleep" to { it.copy(sleep = YamlSleep()) },
     "stopRecording" to { it.copy(stopRecording = YamlStopRecording()) },
     "toggleAirplaneMode" to { it.copy(toggleAirplaneMode = YamlToggleAirplaneMode()) },
     "assertNoDefectsWithAI" to { it.copy(assertNoDefectsWithAI = YamlAssertNoDefectsWithAI()) },
