@@ -107,6 +107,25 @@ tasks.named("compileKotlin", KotlinCompilationTask::class.java) {
     }
 }
 
+// The :maestro-android module copies its built APKs into this module's src/main/resources
+// (copyMaestroAndroid / copyMaestroServer, finalizing its `assemble`). Any task that consumes those
+// resources must declare a dependency on the copy tasks, or Gradle 8.13 fails with an
+// implicit-dependency validation error — as :maestro-client:sourcesJar did once a rebuild made the
+// android build actually re-run the copy. Mirrors how :maestro-ios-driver wires its buildIosDriver
+// resource into processResources + sourcesJar.
+val maestroAndroidCopyTasks = listOf(
+    ":maestro-android:copyMaestroAndroid",
+    ":maestro-android:copyMaestroServer",
+)
+
+tasks.named("processResources") {
+    dependsOn(maestroAndroidCopyTasks)
+}
+
+tasks.matching { it.name == "sourcesJar" }.configureEach {
+    dependsOn(maestroAndroidCopyTasks)
+}
+
 mavenPublishing {
     publishToMavenCentral(true)
     signAllPublications()
