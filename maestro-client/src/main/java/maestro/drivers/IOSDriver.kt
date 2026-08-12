@@ -628,6 +628,11 @@ class IOSDriver(
             call()
         } catch (unreachable: IOSDeviceErrors.Unreachable) {
             LOGGER.error("Device unreachable while processing $callName command", unreachable)
+            // Stable, machine-detectable marker on stderr so the test executor can classify this as
+            // a recoverable INFRA failure (the XCUITest driver died) — distinct from a test-logic
+            // failure — and re-spawn Maestro to relaunch the runner on the same simulator. Purely
+            // additive: the throw below is unchanged, so behaviour is identical for every consumer.
+            System.err.println("MAESTRO_DEVICE_UNREACHABLE while processing $callName")
             throw DeviceUnreachableException(unreachable.callName, unreachable)
         } catch (appCrashException: IOSDeviceErrors.AppCrash) {
             lastAppCrashDetectedMs = System.currentTimeMillis()
