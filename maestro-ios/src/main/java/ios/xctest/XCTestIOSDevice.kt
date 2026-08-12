@@ -254,6 +254,21 @@ class XCTestIOSDevice(
         return executeWithRetry(call, restartAttempts = 0)
     }
 
+    // Attempts to revive a dead XCTest runner. restartXCTestRunner() reinstalls/starts the runner
+    // and clears the transport-dead latch, so the caller's next call() re-issues against the fresh
+    // runner. Returns false (never throws) if the restart itself fails, so callers can fall back.
+    private fun tryRestartRunner(reason: String): Boolean {
+        logger.error("XCTest runner $reason. Attempting restart...")
+        return try {
+            client.restartXCTestRunner()
+            logger.info("XCTest runner restarted successfully. Retrying operation...")
+            true
+        } catch (restartError: Exception) {
+            logger.error("Failed to restart XCTest runner", restartError)
+            false
+        }
+    }
+
     private fun <T> executeWithRetry(call: () -> T, restartAttempts: Int): T {
         return try {
             call()
@@ -265,6 +280,16 @@ class XCTestIOSDevice(
         } catch (timeout: XCUITestServerError.OperationTimeout) {
             throw IOSDeviceErrors.OperationTimeout(timeout.errorResponse)
         } catch (unreachable: XCUITestServerError.Unreachable) {
+            // The runner went transport-unreachable mid-call (socket timeout / refused / EOF).
+            // Reuse the same bounded restart-and-retry the generic arm below already relies on so a
+            // mid-flow runner crash can recover in place instead of failing the whole shard. If the
+            // runner can't be revived within MAX_RESTART_ATTEMPTS, fall back to the exact prior
+            // behaviour: surface IOSDeviceErrors.Unreachable, which the executor detects and respawns.
+            // Like the generic arm, this may re-issue a mutating call (tap/input) once per restart —
+            // that exposure is unchanged from the existing channel-death recovery.
+            if (restartAttempts < MAX_RESTART_ATTEMPTS && tryRestartRunner("unreachable during ${unreachable.callName}")) {
+                return executeWithRetry(call, restartAttempts + 1)
+            }
             throw IOSDeviceErrors.Unreachable(unreachable.callName, unreachable)
         } catch (e: Exception) {
             if (!client.isChannelAlive() && restartAttempts < MAX_RESTART_ATTEMPTS) {
