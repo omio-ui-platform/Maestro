@@ -1,0 +1,11 @@
+appId: com.example.app
+---
+# Bare form: no seconds -> defaults to 4
+- sleep
+# Map form with explicit seconds
+- sleep:
+    seconds: 2
+# Map form with fractional seconds and a label
+- sleep:
+    seconds: 1.5
+    label: "Wait until ready"

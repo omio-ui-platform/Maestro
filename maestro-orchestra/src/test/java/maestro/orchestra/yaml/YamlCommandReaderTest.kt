@@ -44,6 +44,7 @@ import maestro.orchestra.SetAirplaneModeCommand
 import maestro.orchestra.SetLocationCommand
 import maestro.orchestra.SetOrientationCommand
 import maestro.orchestra.SetPermissionsCommand
+import maestro.orchestra.SleepCommand
 import maestro.orchestra.StartRecordingCommand
 import maestro.orchestra.StopAppCommand
 import maestro.orchestra.StopRecordingCommand
@@ -894,6 +895,24 @@ internal class YamlCommandReaderTest {
     fun `findUnknownWorkspaceConfigKeys returns null for non-map yaml`() {
         val config = "- launchApp"
         assertThat(YamlCommandReader.findUnknownWorkspaceConfigKeys(config)).isNull()
+    }
+
+    @Test
+    fun sleep(
+        @YamlFile("035_sleep.yaml") commands: List<Command>,
+    ) {
+        assertThat(commands).containsExactly(
+            ApplyConfigurationCommand(MaestroConfig(appId = "com.example.app")),
+            // Bare `- sleep` -> default of 4 seconds, no label.
+            SleepCommand(),
+            // Explicit integer seconds.
+            SleepCommand(seconds = 2.0),
+            // Fractional seconds + label.
+            SleepCommand(seconds = 1.5, label = "Wait until ready"),
+        ).inOrder()
+
+        // Guard the default so a future edit can't silently change it.
+        assertThat((commands[1] as SleepCommand).seconds).isEqualTo(4.0)
     }
 
     private fun commands(vararg commands: Command): List<MaestroCommand> =

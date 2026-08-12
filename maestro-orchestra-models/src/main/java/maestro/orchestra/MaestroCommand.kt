@@ -68,6 +68,7 @@ data class MaestroCommand(
     val defineVariablesCommand: DefineVariablesCommand? = null,
     val runScriptCommand: RunScriptCommand? = null,
     val waitForAnimationToEndCommand: WaitForAnimationToEndCommand? = null,
+    val sleepCommand: SleepCommand? = null,
     val evalScriptCommand: EvalScriptCommand? = null,
     val scrollUntilVisible: ScrollUntilVisibleCommand? = null,
     val travelCommand: TravelCommand? = null,
@@ -121,6 +122,7 @@ data class MaestroCommand(
         defineVariablesCommand = command as? DefineVariablesCommand,
         runScriptCommand = command as? RunScriptCommand,
         waitForAnimationToEndCommand = command as? WaitForAnimationToEndCommand,
+        sleepCommand = command as? SleepCommand,
         evalScriptCommand = command as? EvalScriptCommand,
         scrollUntilVisible = command as? ScrollUntilVisibleCommand,
         travelCommand = command as? TravelCommand,
@@ -172,6 +174,7 @@ data class MaestroCommand(
         defineVariablesCommand != null -> defineVariablesCommand
         runScriptCommand != null -> runScriptCommand
         waitForAnimationToEndCommand != null -> waitForAnimationToEndCommand
+        sleepCommand != null -> sleepCommand
         evalScriptCommand != null -> evalScriptCommand
         scrollUntilVisible != null -> scrollUntilVisible
         travelCommand != null -> travelCommand
