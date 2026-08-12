@@ -57,6 +57,32 @@ class XCTestIOSDeviceTest {
         assertThrows<IOSDeviceErrors.Unreachable> { device.tap(30, 40) }
     }
 
+    @Test
+    fun `unreachable now drives a bounded runner restart, then still surfaces Unreachable when recovery fails`() {
+        val cause = SocketTimeoutException("simulated read timeout")
+        val installer = RecordingInstaller()
+        val driverClient = XCTestDriverClient(
+            installer = installer,
+            client = XCTestClient("localhost", 1),
+            okHttpClient = throwingOkHttpClient(cause),
+        )
+        val device = XCTestIOSDevice(
+            deviceId = "test-device",
+            client = driverClient,
+            getInstalledApps = { emptySet() },
+        )
+
+        val thrown = assertThrows<IOSDeviceErrors.Unreachable> { device.tap(x = 10, y = 20) }
+
+        // New behaviour: an Unreachable now drives the same restart-and-retry the generic arm uses
+        // (previously it rethrew immediately with zero restart attempts). Bounded to
+        // MAX_RESTART_ATTEMPTS (2), so the runner is restarted exactly twice before giving up.
+        assertThat(installer.startCount).isEqualTo(2)
+        // No-regression fallback: when the runner can't be revived we still surface Unreachable with
+        // the original callName, which the executor keys on to respawn the runner.
+        assertThat(thrown.callName).isEqualTo("touch")
+    }
+
     private fun throwingOkHttpClient(cause: Throwable): OkHttpClient =
         OkHttpClient.Builder()
             .addInterceptor { _ -> throw cause }
@@ -66,6 +92,20 @@ class XCTestIOSDeviceTest {
         override fun start(): XCTestClient = error("not used in this test")
         override fun uninstall(): Boolean = error("not used in this test")
         override fun isChannelAlive(): Boolean = error("not used in this test")
+        override fun close() {}
+    }
+
+    // Restart always "succeeds" (uninstall + start return cleanly), so the retried call re-issues
+    // against the fresh runner — which the always-throwing OkHttp client fails again, exercising the
+    // full bounded loop. startCount records how many times the runner was restarted.
+    private class RecordingInstaller : XCTestInstaller {
+        var startCount = 0
+        override fun start(): XCTestClient {
+            startCount++
+            return XCTestClient("localhost", 1)
+        }
+        override fun uninstall(): Boolean = true
+        override fun isChannelAlive(): Boolean = false
         override fun close() {}
     }
 }
