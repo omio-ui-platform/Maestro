@@ -52,6 +52,7 @@ class TestSuiteInteractor(
     private val buildName: String? = null,
     private val buildNumber: String? = null,
     private val deviceName: String? = null,
+    private val jobName: String? = null,
     private val captureSteps: Boolean = false,
     private val captureFullArtifacts: Boolean = false,
     private val testOutputDir: Path? = null,
@@ -291,9 +292,9 @@ class TestSuiteInteractor(
                     val gcsUrl = GcsUploader.uploadRecording(
                         file = recordingFile,
                         flowName = flowFile.nameWithoutExtension,
-                        buildName = buildName!!,
                         buildNumber = buildNumber!!,
-                        deviceName = deviceName!!,
+                        attemptNumber = attemptNumber,
+                        jobName = jobName,
                         bucketName = gcsBucket
                     )
                     if (gcsUrl != null) {

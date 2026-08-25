@@ -652,6 +652,12 @@ class TestCommand : Callable<Int> {
         val buildName = env["BUILD_NAME"]
         val buildNumber = env["BUILD_NUMBER"]
         val deviceName = env["DEVICE_NAME"]
+        // CI job identifier (e.g. Jenkins JOB_NAME) — embedded in the uploaded
+        // recording's object name (see GcsUploader.uploadRecording) so two
+        // DIFFERENT jobs that happen to share a build number don't collide on the
+        // same GCS object. Falls back to the process's own JOB_NAME env var (set
+        // automatically by Jenkins) if not explicitly passed via -e.
+        val jobName = env["JOB_NAME"] ?: System.getenv("JOB_NAME")
 
         // DEBUG LOGS: Recording configuration passed to TestSuiteInteractor
         println("[TEST-CMD-DEBUG] Creating TestSuiteInteractor with recording config:")
@@ -662,6 +668,7 @@ class TestCommand : Callable<Int> {
         println("[TEST-CMD-DEBUG]   buildName=$buildName")
         println("[TEST-CMD-DEBUG]   buildNumber=$buildNumber")
         println("[TEST-CMD-DEBUG]   deviceName=$deviceName")
+        println("[TEST-CMD-DEBUG]   jobName=$jobName")
         println("[TEST-CMD-DEBUG]   shardIndex=${if (chunkPlans.size == 1) null else shardIndex}")
 
         val suiteResult = TestSuiteInteractor(
@@ -676,6 +683,7 @@ class TestCommand : Callable<Int> {
             buildName = buildName,
             buildNumber = buildNumber,
             deviceName = deviceName,
+            jobName = jobName,
             captureSteps = format == ReportFormat.HTML_DETAILED,
             captureFullArtifacts = analyze,
             testOutputDir = testOutputDir,
