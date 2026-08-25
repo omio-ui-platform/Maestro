@@ -78,38 +78,87 @@ object GcsUploader {
     }
 
     /**
-     * Uploads a recording file to GCS bucket root.
+     * Sanitizes a single GCS path SEGMENT (a folder name or the final filename) down
+     * to object-key-safe characters. Does not touch "/" — callers are responsible
+     * for splitting a multi-segment value (e.g. a Jenkins `JOB_NAME` like
+     * `e2e/android-stable`) into its own segments and sanitizing each one, so a
+     * literal "/" already present in a value can become a real path boundary
+     * instead of being stripped.
      *
-     * Naming convention: {buildName}-{buildNumber}-{deviceName}-{flowName}.mp4
-     * Example: nightly-12345-OmioIOS1-login_flow.mp4
+     * `internal` (not `private`) so the naming convention is directly unit-testable
+     * without spawning a real `gcloud` process.
+     */
+    internal fun sanitizeForObjectName(value: String): String =
+        value.replace(Regex("[^A-Za-z0-9_.-]+"), "-").trim('-')
+
+    /**
+     * Builds the recording upload's object PATH (folders + filename) — see
+     * [uploadRecording]'s own doc for the convention and why `jobName` becomes real
+     * path segments. Pure/no I/O, and `internal` for the same testability reason as
+     * [sanitizeForObjectName].
+     */
+    internal fun buildRecordingObjectName(
+        flowName: String,
+        buildNumber: String,
+        attemptNumber: Int,
+        jobName: String?,
+    ): String {
+        // Jenkins JOB_NAME for a job inside a folder is already "/"-delimited (e.g.
+        // "e2e/android-stable") — split on it and sanitize each segment individually
+        // so "/" survives as a real folder boundary rather than being collapsed by
+        // sanitizeForObjectName into a dash.
+        val jobPathPrefix = jobName
+            ?.split("/")
+            ?.map(::sanitizeForObjectName)
+            ?.filter { it.isNotBlank() }
+            ?.takeIf { it.isNotEmpty() }
+            ?.joinToString("/", postfix = "/")
+            ?: ""
+        return "${jobPathPrefix}${buildNumber}/${attemptNumber}-${flowName}.mp4"
+    }
+
+    /**
+     * Uploads a recording file to GCS, organized by job and build.
+     *
+     * Object path: [{jobName}/]{buildNumber}/{attemptNumber}-{flowName}.mp4
+     * Example: e2e/android-stable/12345/6-login_flow.mp4
+     *
+     * `jobName` becomes real GCS "folders" (not a flat filename segment) whenever
+     * available, specifically to prevent a collision between two DIFFERENT Jenkins
+     * jobs (each with their own independent build-number counter, e.g.
+     * `e2e/ios-stable` and `e2e/ios-expo-stable`) that happen to share the same
+     * `buildNumber` and produce a failed test with the same flow name around the
+     * same time — without it, their recordings can collide on the exact same
+     * object key (silently overwriting one another) or be indistinguishable to a
+     * downstream recovery step that lists recordings scoped only by build number.
      *
      * @param file The recording file to upload
      * @param flowName The name of the flow
-     * @param buildName Build identifier (e.g., "nightly", "pr-check")
      * @param buildNumber CI build number
-     * @param deviceName Device/simulator name
+     * @param attemptNumber The (1-based) retry attempt this recording is from
+     * @param jobName CI job identifier (e.g. Jenkins JOB_NAME, "/"-delimited for a
+     *   job inside a folder). Optional: when null/blank, the recording is uploaded
+     *   directly under `{buildNumber}/` with no job folder — e.g. a local/dev run
+     *   with no Jenkins JOB_NAME set.
      * @param bucketName The GCS bucket name
      * @return The public URL of the uploaded file, or null if upload failed
      */
     fun uploadRecording(
         file: File,
         flowName: String,
-        buildName: String,
         buildNumber: String,
-        deviceName: String,
+        attemptNumber: Int,
+        jobName: String? = System.getenv("JOB_NAME"),
         bucketName: String? = System.getenv("GCS_BUCKET")
     ): String? {
         // DEBUG LOGS: Environment variables for naming
         logger.info("[GCS-DEBUG] uploadRecording called for flowName=$flowName")
-        logger.info("[GCS-DEBUG] buildName=$buildName")
+        logger.info("[GCS-DEBUG] jobName=$jobName")
         logger.info("[GCS-DEBUG] buildNumber=$buildNumber")
-        logger.info("[GCS-DEBUG] deviceName=$deviceName")
+        logger.info("[GCS-DEBUG] attemptNumber=$attemptNumber")
         logger.info("[GCS-DEBUG] GCS_BUCKET (from System.getenv) -> bucketName=$bucketName")
 
-        // Naming: BuildName-BuildNumber-DeviceName-FlowName.mp4
-        // (No attempt number since we only record on last attempt)
-        // Uploaded to root of bucket (no folder structure)
-        val objectName = "${buildName}-${buildNumber}-${deviceName}-${flowName}.mp4"
+        val objectName = buildRecordingObjectName(flowName, buildNumber, attemptNumber, jobName)
 
         logger.info("[GCS-DEBUG] Constructed objectName=$objectName")
         logger.info("[GCS-DEBUG] File to upload: ${file.absolutePath}, exists=${file.exists()}, size=${if (file.exists()) file.length() else "N/A"} bytes")
