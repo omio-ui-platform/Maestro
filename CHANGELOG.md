@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Shared flows: resolve `app/<package>/<flows|scripts>/...` aliases from the nearest checkout that holds the file, so any checkout name or location works (git worktrees, per-task workspaces, clones not named `app`)
+- Shared flows: a worktree nested inside another checkout now resolves against itself instead of silently running the parent checkout's copy
+- Shared flows: support nested shared paths (`app/<package>/flows/sub/dir.yaml`), previously joined with `", "`
+- Shared flows: report a syntax error for a truncated alias instead of an `IndexOutOfBoundsException`, and list the searched roots when a shared file is missing
+- Dependency discovery: include alias-referenced shared flows, which were silently skipped
+
 ## 2.7.0
 
 - Artifacts: revamp per-flow output into a leaner, flat bundle with a structured manifest, readable step names, device logs, and crash/ANR reports
