@@ -80,6 +80,7 @@ import maestro.orchestra.error.InvalidFlowFile
 import maestro.orchestra.error.MediaFileNotFound
 import maestro.orchestra.error.SyntaxError
 import maestro.orchestra.util.Env.withEnv
+import maestro.orchestra.workspace.SharedFlowResolver
 import java.nio.file.Path
 import kotlin.io.path.absolutePathString
 import kotlin.io.path.exists
@@ -738,14 +739,14 @@ data class YamlFluentCommand(
     private fun resolvePath(flowPath: Path, requestedPath: String): Path {
         val path = flowPath.fileSystem.getPath(requestedPath)
 
-        val fileParts = path.toString().split("/")
-        val resolvedPath = if(fileParts[0] == "app") {
-            val appRoot = flowPath.toString().split("/app/")[0]
-            val packageName = fileParts[1]
-            val scriptOrFlow = fileParts[2]
-
-            val sharedFlow = fileParts.toTypedArray().sliceArray(3 until fileParts.size).joinToString()
-            flowPath.fileSystem.getPath("$appRoot/app/packages/$packageName/maestro/shared/$scriptOrFlow/$sharedFlow")
+        val resolvedPath = if (SharedFlowResolver.isAlias(requestedPath)) {
+            SharedFlowResolver.resolveAlias(flowPath, requestedPath)
+                ?: throw InvalidFlowFile(
+                    "Shared file \"$requestedPath\" was not found in any checkout above " +
+                        "${flowPath.toUri()}. Searched: " +
+                        SharedFlowResolver.searchedRoots(flowPath).joinToString { it.toString() },
+                    flowPath
+                )
         } else if (path.isAbsolute) {
             path
         } else {
@@ -771,11 +772,14 @@ data class YamlFluentCommand(
         if (path.isAbsolute) {
             return path.toString()
         }
-        // Derive app root from flow path (e.g., /Users/.../StudioProjects/app/packages/... -> /Users/.../StudioProjects/app)
-        val flowPathStr = flowPath.toString()
-        val appRootPrefix = flowPathStr.split("/app/")[0]
-        val resolvedPath = flowPath.fileSystem.getPath("$appRootPrefix/app/$imagePath")
-        return resolvedPath.toString()
+        // Component images are addressed from the checkout root, which is the nearest ancestor of
+        // the referencing flow that actually holds the image. When no ancestor has it, fall back to
+        // resolving next to the flow — the same rule every other relative path follows — so the
+        // downstream "image not found" error names an absolute path.
+        return (
+            SharedFlowResolver.resolveFromCheckoutRoot(flowPath, imagePath)
+                ?: flowPath.resolveSibling(path).toAbsolutePath().normalize()
+            ).toString()
     }
 
     private fun extendedWait(command: YamlExtendedWaitUntil): MaestroCommand {
