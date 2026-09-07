@@ -3,20 +3,23 @@ package maestro.orchestra.workspace
 import maestro.orchestra.error.SyntaxError
 import java.nio.file.Path
 import kotlin.io.path.exists
+import kotlin.io.path.isDirectory
 
 /**
  * Resolves the monorepo-relative `app/<package>/<flows|scripts>/<rest>` aliases used by `runFlow`,
  * `runScript` and component image paths.
  *
  * The alias names a file in a *sibling* package of the flow that references it, so resolving it
- * means finding the checkout root. This is done by walking up from the referencing flow and taking
- * the FIRST ancestor that actually contains the requested file. Two consequences worth knowing:
+ * means finding the checkout root. That root is the nearest ancestor of the referencing flow
+ * holding a `packages/` directory, which makes resolution independent of what the checkout is
+ * called or where it lives: a clone named `app`, a clone named anything else, a git worktree, or a
+ * per-task workspace directory all work.
  *
- * - The checkout can be named and located anything: a clone named `app`, a clone named anything
- *   else, a git worktree, or a per-task workspace directory.
- * - Nearest-ancestor-wins means a worktree nested inside another checkout resolves against ITSELF.
- *   Deriving the root from the path string instead (splitting at the first `/app/` segment) picked
- *   the outer checkout, which silently ran the wrong copy of a shared flow.
+ * Resolution stops at that root and never continues into an enclosing checkout. A worktree nested
+ * inside another checkout therefore resolves against ITSELF, and a shared file the worktree is
+ * missing is an error rather than a silent fallback to the outer checkout's copy. Deriving the root
+ * from the path string instead (splitting at the first `/app/` segment) picked the outer checkout,
+ * which silently ran the wrong copy of a shared flow.
  */
 object SharedFlowResolver {
 
@@ -31,9 +34,17 @@ object SharedFlowResolver {
 
     /**
      * `app/<package>/<flows|scripts>/<rest>` -> `<checkout>/packages/<package>/maestro/shared/<flows|scripts>/<rest>`,
-     * or null when no ancestor of [flowPath] contains it.
+     * or null when the file is absent from the checkout or [flowPath] has no checkout root above it.
      */
-    fun resolveAlias(flowPath: Path, requestedPath: String): Path? {
+    fun resolveAlias(flowPath: Path, requestedPath: String): Path? =
+        aliasTarget(flowPath, requestedPath)?.takeIf { it.exists() }
+
+    /**
+     * The single path an alias designates, whether or not anything is there — so a caller can name
+     * the expected location when the file is missing. Null when [flowPath] has no checkout root
+     * above it.
+     */
+    fun aliasTarget(flowPath: Path, requestedPath: String): Path? {
         val parts = requestedPath.split("/").filter { it.isNotEmpty() }
         if (parts.size < 4) {
             throw SyntaxError(
@@ -45,7 +56,8 @@ object SharedFlowResolver {
         val (_, packageName, scriptOrFlow) = parts
         val rest = parts.drop(3).joinToString("/")
 
-        return findInAncestors(flowPath, "$PACKAGES_DIR/$packageName/$SHARED_DIR/$scriptOrFlow/$rest")
+        return findCheckoutRoot(flowPath)
+            ?.resolve("$PACKAGES_DIR/$packageName/$SHARED_DIR/$scriptOrFlow/$rest")
     }
 
     /**
@@ -53,14 +65,14 @@ object SharedFlowResolver {
      * are addressed from the root rather than through the `app/` alias.
      */
     fun resolveFromCheckoutRoot(flowPath: Path, relativePath: String): Path? =
-        findInAncestors(flowPath, relativePath)
+        findCheckoutRoot(flowPath)?.resolve(relativePath)?.takeIf { it.exists() }
 
-    /** Ancestors of the referencing flow, nearest first, for error messages. */
-    fun searchedRoots(flowPath: Path): List<Path> = ancestorsOf(flowPath).toList()
-
-    private fun findInAncestors(flowPath: Path, relativePath: String): Path? = ancestorsOf(flowPath)
-        .map { it.resolve(relativePath) }
-        .firstOrNull { it.exists() }
+    /**
+     * The checkout [flowPath] belongs to: its nearest ancestor holding a `packages/` directory.
+     * Null when there is none, which means the flow is not inside a monorepo checkout at all.
+     */
+    fun findCheckoutRoot(flowPath: Path): Path? = ancestorsOf(flowPath)
+        .firstOrNull { it.resolve(PACKAGES_DIR).isDirectory() }
 
     private fun ancestorsOf(flowPath: Path): Sequence<Path> {
         val start = flowPath.toAbsolutePath().normalize().parent ?: return emptySequence()

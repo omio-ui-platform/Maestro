@@ -84,7 +84,12 @@ class SharedFlowResolverTest {
     }
 
     @Test
-    fun `falls back to an outer checkout when the nearest one lacks the file`(@TempDir tmp: Path) {
+    fun `does not fall back to an outer checkout when the nearest one lacks the file`(
+        @TempDir tmp: Path,
+    ) {
+        // Resolution must stop at the worktree. Continuing into the outer checkout would run the
+        // parent branch's copy of the shared flow — the same silent cross-checkout leak that
+        // splitting the path at `/app/` caused.
         val outer = tmp.resolve("Development/omio.github/app")
         checkout(outer)
         // A worktree that has its own test flow but no copy of the shared flow.
@@ -93,7 +98,14 @@ class SharedFlowResolverTest {
         val flow = flowDir.resolve("some-test.yaml")
         flow.writeText("appId: com.example\n---\n- runFlow: $alias\n")
 
-        assertThat(ownerOf(SharedFlowResolver.resolveAlias(flow, alias))).isEqualTo(outer.toString())
+        assertThat(SharedFlowResolver.resolveAlias(flow, alias)).isNull()
+        // ...and the alias points inside the worktree, so an error can name that one path.
+        assertThat(SharedFlowResolver.aliasTarget(flow, alias))
+            .isEqualTo(
+                outer.resolve(
+                    ".worktrees/partial/packages/fe-utils/maestro/shared/flows/initial-setup.yaml"
+                )
+            )
     }
 
     @Test
@@ -177,13 +189,33 @@ class SharedFlowResolverTest {
     }
 
     @Test
-    fun `lists the searched roots nearest first`(@TempDir tmp: Path) {
-        val flow = checkout(tmp.resolve("a/b"))
+    fun `finds the checkout root as the nearest ancestor holding packages`(@TempDir tmp: Path) {
+        val root = tmp.resolve("a/b")
+        val flow = checkout(root)
 
-        val searched = SharedFlowResolver.searchedRoots(flow).map { it.toString() }
+        assertThat(SharedFlowResolver.findCheckoutRoot(flow)).isEqualTo(root)
+    }
 
-        assertThat(searched.first()).endsWith("a/b/packages/conversion-e2e/maestro/tests/app")
-        assertThat(searched).contains(tmp.resolve("a/b").toString())
-        assertThat(searched.last()).isEqualTo(tmp.root.toString())
+    @Test
+    fun `finds the nested checkout root, not the enclosing one`(@TempDir tmp: Path) {
+        val outer = tmp.resolve("Development/omio.github/app")
+        checkout(outer)
+        val nested = outer.resolve(".worktrees/rn-pay-fix")
+
+        assertThat(SharedFlowResolver.findCheckoutRoot(checkout(nested))).isEqualTo(nested)
+    }
+
+    @Test
+    fun `stops at the filesystem root when the flow is not in a checkout`(@TempDir tmp: Path) {
+        // No `packages/` anywhere above, so the walk terminates instead of probing to `/` and
+        // reporting every ancestor up to $HOME as a candidate.
+        val flowDir = tmp.resolve("loose/flows")
+        flowDir.createDirectories()
+        val flow = flowDir.resolve("some-test.yaml")
+        flow.writeText("appId: com.example\n---\n- runFlow: $alias\n")
+
+        assertThat(SharedFlowResolver.findCheckoutRoot(flow)).isNull()
+        assertThat(SharedFlowResolver.aliasTarget(flow, alias)).isNull()
+        assertThat(SharedFlowResolver.resolveAlias(flow, alias)).isNull()
     }
 }

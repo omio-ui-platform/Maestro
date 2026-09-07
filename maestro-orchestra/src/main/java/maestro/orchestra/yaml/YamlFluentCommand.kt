@@ -742,9 +742,11 @@ data class YamlFluentCommand(
         val resolvedPath = if (SharedFlowResolver.isAlias(requestedPath)) {
             SharedFlowResolver.resolveAlias(flowPath, requestedPath)
                 ?: throw InvalidFlowFile(
-                    "Shared file \"$requestedPath\" was not found in any checkout above " +
-                        "${flowPath.toUri()}. Searched: " +
-                        SharedFlowResolver.searchedRoots(flowPath).joinToString { it.toString() },
+                    SharedFlowResolver.aliasTarget(flowPath, requestedPath)
+                        ?.let { "Shared file \"$requestedPath\" was not found at ${it.toUri()}" }
+                        ?: ("Shared file \"$requestedPath\" could not be resolved: no checkout " +
+                            "root (an ancestor directory holding \"packages\") above " +
+                            "${flowPath.toUri()}"),
                     flowPath
                 )
         } else if (path.isAbsolute) {
