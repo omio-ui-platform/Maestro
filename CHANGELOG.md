@@ -8,6 +8,52 @@
 - Shared flows: report a syntax error for a truncated alias instead of an `IndexOutOfBoundsException`, and name the expected path when a shared file is missing
 - Dependency discovery: include alias-referenced shared flows, which were silently skipped
 
+## 2.10.0
+
+- CLI: accept a full Android system image path in `--device-os`, in addition to a version like `android-34`
+
+## 2.9.0
+
+- Core: add `setDarkMode`, `toggleDarkMode`, `assertDarkMode`, and `assertLightMode` to switch and assert light/dark themes on iOS and Android
+- Core: support negation globs in `config.yaml`
+- Core: match text selectors against an element's `error` property
+- Core: close the GraalJS engine after validating each flow
+- Android: select the system-image tag when starting a device
+- Android: bound adb-backed devtools sockets so WebView `tapOn` can't hang or silently abort
+- Android: fetch the WebView hierarchy as a serialized string to avoid the CDP depth cap
+- Android: don't fail WebView inspection on React/Vue/Angular circular DOMs
+- Android: wait out a late locale flip with a grace poll
+- Android: don't report an empty input's hint as its text
+- Web: fix broken tests on Chrome 150+
+- CLI: retry upload-status polls that get no HTTP response
+
+Thanks to @mrvissercb, @btrautmann and @markrickert who contributed changes included in this release ❤️
+
+## 2.8.0
+
+- Core: support element-relative `point` on `swipe` commands
+- Core: fix `takeScreenshot`/`startRecording` failing with "No such file or directory" when the path contains `..`
+- Core: fail a `takeScreenshot`/`startRecording` whose path names a directory instead of writing a hidden `..png`
+- Core: reject an artifact path that escapes the command's output folder when bundling debug output
+- Core: fix `childOf` selectors matching against a stale view hierarchy
+- Core: support variables in `setPermissions` values
+- Core: support variables in the `assertScreenshot` threshold
+- Core: fix losing run artifacts when an `onFlowComplete` hook fails
+- Android: set the locale on the correct emulator after `start-device`
+- Android: don't block on the locale broadcast
+- Android: don't block forever when an emulator fails to boot
+- iOS: don't fail listing devices when `devicectl` is unavailable
+- CLI: link JUnit and HTML reports back to Maestro Cloud, via per-flow `cloud.runId`/`cloud.runUrl` properties and suite-level `cloud.uploadId`/`cloud.url`
+- CLI: truncate the JUnit `timestamp` to whole seconds so strict CI importers accept them
+- CLI: record start times for local runs in JUnit and HTML reports
+- CLI: improve report suite duration accuracy in JUnit and HTML reports
+- CLI: show human-readable start times in HTML reports
+- CLI: don't retry a cloud upload whose outcome is unknown
+- CLI: fix the "similar device" hint shown by `maestro cloud`
+- CLI: report durations consistently in console output
+
+Thanks to @PankovSerge who contributed changes included in this release ❤️
+
 ## 2.7.0
 
 - Artifacts: revamp per-flow output into a leaner, flat bundle with a structured manifest, readable step names, device logs, and crash/ANR reports

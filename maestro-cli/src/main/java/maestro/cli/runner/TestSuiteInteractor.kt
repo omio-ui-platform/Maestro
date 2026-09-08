@@ -11,7 +11,6 @@ import maestro.cli.report.TestDebugReporter
 import maestro.cli.report.TestSuiteReporter
 import maestro.cli.util.FileUtils.toCwdRelativeOrAbsoluteString
 import maestro.cli.util.PrintUtils
-import maestro.cli.util.TimeUtils
 import maestro.cli.view.ErrorViewUtils
 import maestro.cli.view.TestSuiteStatusView
 import maestro.cli.view.TestSuiteStatusView.TestSuiteViewModel
@@ -25,6 +24,8 @@ import org.slf4j.LoggerFactory
 import java.io.File
 import java.nio.file.Path
 import kotlin.system.measureTimeMillis
+import kotlin.math.roundToLong
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import maestro.cli.util.GcsUploader
 import maestro.cli.util.ScreenshotUtils
@@ -74,6 +75,8 @@ class TestSuiteInteractor(
 
         val flowResults = mutableListOf<TestExecutionSummary.FlowResult>()
 
+        val suiteStartTime = System.currentTimeMillis()
+
         PrintUtils.message("${shardPrefix}Waiting for flows to complete...")
 
         var passed = true
@@ -116,7 +119,9 @@ class TestSuiteInteractor(
         }
 
 
-        val suiteDuration = flowResults.sumOf { it.duration?.inWholeSeconds ?: 0 }.seconds
+        // Wall-clock elapsed rather than the sum of flow durations, so that the suite's reported
+        // duration and its startTime describe the same window in the JUnit report.
+        val suiteDuration = (System.currentTimeMillis() - suiteStartTime).milliseconds
 
         TestSuiteStatusView.showSuiteResult(
             TestSuiteViewModel(
@@ -142,6 +147,7 @@ class TestSuiteInteractor(
                     passed = passed,
                     flows = flowResults,
                     duration = suiteDuration,
+                    startTime = suiteStartTime,
                     deviceName = device?.description,
                 )
             ),
@@ -238,6 +244,7 @@ class TestSuiteInteractor(
         val flowDir = TestDebugReporter.createFlowDir(debugOutputPath, flowName, shardIndex)
 
         var debugOutput = FlowDebugOutput()
+        val flowStartTime = System.currentTimeMillis()
         val flowTimeMillis = measureTimeMillis {
             try {
                 val orchestra = Orchestra(
@@ -327,8 +334,8 @@ class TestSuiteInteractor(
             }
         }
 
-        val flowDuration = TimeUtils.durationInSeconds(flowTimeMillis)
-        PrintUtils.message("${shardPrefix}Flow '$flowName' execution ended in $flowDuration seconds")
+        val flowDuration = flowTimeMillis.milliseconds
+        PrintUtils.message("${shardPrefix}Flow '$flowName' execution ended in ${(flowTimeMillis / 1000f).roundToLong().seconds} seconds")
         // FIXME(bartekpacia): Save AI output as well
 
         TestSuiteStatusView.showFlowCompletion(
@@ -379,6 +386,7 @@ class TestSuiteInteractor(
                     )
                 } else null,
                 duration = flowDuration,
+                startTime = flowStartTime,
                 properties = maestroConfig?.properties,
                 tags = maestroConfig?.tags,
                 steps = steps,

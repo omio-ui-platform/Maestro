@@ -320,6 +320,20 @@ Wrapped `DebugLogStore.finalizeRun()` in try-catch to prevent exceptions during 
 
 ### Sync with Upstream
 
+#### 2026-09: sync to upstream v2.10.0 (`75e4a03d`)
+
+Merged `upstream/main` (2.7.0 -> 2.10.0, 36 upstream commits since the July sync point). The July 2026 sync (`1da35688`) was a squash commit, so git's
+recorded merge base was stale (v2.6.0) and a plain merge reported 41 conflicts. The merge was computed against the upstream commit
+that squash actually matched (`1b8564d5`), which left 5 real conflicts. Manual reconciliation:
+
+- `TestSuiteInteractor.kt`: kept the recording/GCS-upload block; the flow duration handed to reports is now upstream's `kotlin.time.Duration`. Upstream removed `TimeUtils.durationInSeconds`, so the fork's "execution ended in N seconds" line does the same whole-second rounding inline
+- `YamlNavigationAction`: added `Sleep("sleep")` to upstream's new enum so `action: sleep` keeps working
+- `Commands.kt`: added `yamlString()` to upstream's new `setDarkMode`/`toggleDarkMode`/`assertDarkMode`/`assertLightMode` commands (the fork's `Command` interface requires it)
+- Restored the iOS simulator driver artifacts under `maestro-ios-driver/src/main/resources/driver-iPhoneSimulator/` that the July squash had dropped (same problem `aef75343` fixed after the May sync)
+- Took upstream's `maestro-cli/mcp-viewer/package-lock.json` and `.nvmrc` verbatim; the July squash had regenerated the lockfile without the `libc` fields and kept an older Node version
+
+#### Earlier syncs
+
 **Commits:**
 - `c4f6750e` Merge pull request #27 from dincozdemir/UP-4194/sync_fork_from_main
 - `871ac0b2` merge upstream with fork
