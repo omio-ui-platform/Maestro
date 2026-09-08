@@ -104,6 +104,17 @@ object DependencyResolver {
     private fun resolvePath(flowPath: Path, requestedPath: String): Path {
         val path = flowPath.fileSystem.getPath(requestedPath)
 
+        // Monorepo-relative aliases resolve against a sibling package, not against the flow's own
+        // directory. Without this, every alias-referenced shared flow resolved to a path that does
+        // not exist and was silently dropped from the dependency set.
+        // Discovery is best-effort, so a malformed alias is left to the parser to report rather
+        // than aborting the whole dependency scan here.
+        if (SharedFlowResolver.isAlias(requestedPath)) {
+            runCatching { SharedFlowResolver.resolveAlias(flowPath, requestedPath) }
+                .getOrNull()
+                ?.let { return it }
+        }
+
         return if (path.isAbsolute) {
             path
         } else {
