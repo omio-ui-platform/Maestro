@@ -27,6 +27,7 @@ import maestro.SwipeDirection
 import maestro.TapRepeat
 import maestro.js.JsEngine
 import maestro.orchestra.util.Env.evaluateScripts
+import maestro.orchestra.util.Env.evaluateScriptsIncludingKeys
 import com.fasterxml.jackson.annotation.JsonIgnore
 import maestro.MaestroException
 import java.nio.file.Path
@@ -134,13 +135,15 @@ data class SwipeCommand(
     val endRelative: String? = null,
     val duration: Long = DEFAULT_DURATION_IN_MILLIS,
     val waitToSettleTimeoutMs: Int? = null,
+    val relativePoint: String? = null, // element-relative start within swipe.from
     override val label: String? = null,
     override val optional: Boolean = false,
 ) : Command {
     override val originalDescription: String
         get() = when {
             elementSelector != null && direction != null -> {
-                "Swiping in $direction direction on ${elementSelector.description()}"
+                val pointInfo = relativePoint?.let { " at $it" } ?: ""
+                "Swiping in $direction direction on ${elementSelector.description()}$pointInfo"
             }
             direction != null -> {
                 "Swiping in $direction direction in $duration ms"
@@ -159,6 +162,7 @@ data class SwipeCommand(
             elementSelector = elementSelector?.evaluateScripts(jsEngine),
             startRelative = startRelative?.evaluateScripts(jsEngine),
             endRelative = endRelative?.evaluateScripts(jsEngine),
+            relativePoint = relativePoint?.evaluateScripts(jsEngine),
             label = label?.evaluateScripts(jsEngine)
         )
     }
@@ -902,13 +906,8 @@ data class LaunchAppCommand(
     override fun evaluateScripts(jsEngine: JsEngine): LaunchAppCommand {
         return copy(
             appId = appId.evaluateScripts(jsEngine),
-            permissions = permissions?.entries?.associate {
-                it.key.evaluateScripts(jsEngine) to it.value.evaluateScripts(jsEngine)
-            },
-            launchArguments = launchArguments?.entries?.associate {
-                val value = it.value
-                it.key.evaluateScripts(jsEngine) to if (value is String) value.evaluateScripts(jsEngine) else it.value
-            },
+            permissions = permissions?.evaluateScripts(jsEngine, "permissions"),
+            launchArguments = launchArguments?.evaluateScriptsIncludingKeys(jsEngine, "launchArguments"),
             label = label?.evaluateScripts(jsEngine)
         )
     }
@@ -938,9 +937,7 @@ data class SetPermissionsCommand(
     override fun evaluateScripts(jsEngine: JsEngine): SetPermissionsCommand {
         return copy(
             appId = appId.evaluateScripts(jsEngine),
-            permissions = permissions.entries.associate {
-                it.key.evaluateScripts(jsEngine) to it.value.evaluateScripts(jsEngine)
-            },
+            permissions = permissions.evaluateScripts(jsEngine, "permissions"),
             label = label?.evaluateScripts(jsEngine)
         )
     }
@@ -1543,9 +1540,7 @@ data class DefineVariablesCommand(
 
     override fun evaluateScripts(jsEngine: JsEngine): DefineVariablesCommand {
         return copy(
-            env = env.mapValues { (_, value) ->
-                value.evaluateScripts(jsEngine)
-            },
+            env = env.evaluateScripts(jsEngine, "env"),
             label = label?.evaluateScripts(jsEngine)
         )
     }
@@ -1583,9 +1578,7 @@ data class RunScriptCommand(
 
     override fun evaluateScripts(jsEngine: JsEngine): Command {
         return copy(
-            env = env.mapValues { (_, value) ->
-                value.evaluateScripts(jsEngine)
-            },
+            env = env.evaluateScripts(jsEngine, "env"),
             condition = condition?.evaluateScripts(jsEngine),
             label = label?.evaluateScripts(jsEngine)
         )
@@ -1767,7 +1760,7 @@ data class AddMediaCommand(
 
     override fun evaluateScripts(jsEngine: JsEngine): Command {
         return copy(
-            mediaPaths = mediaPaths.map { it.evaluateScripts(jsEngine) },
+            mediaPaths = mediaPaths.evaluateScripts(jsEngine),
             label = label?.evaluateScripts(jsEngine)
         )
     }
@@ -1798,9 +1791,15 @@ data class StopRecordingCommand(
     }
 }
 
-enum class AirplaneValue {
-    Enable,
-    Disable,
+/**
+ * [yamlValue] is the word written in YAML. It is deliberately NOT a `@JsonProperty` on each constant:
+ * Jackson serializes this enum as `SetAirplaneModeCommand.value` on the MaestroCommand wire, where the
+ * constant name is what is written and read back, so renaming it there would break every command already
+ * persisted or in flight. The schema reads the word through `@YamlValues(spelledBy = "yamlValue")`.
+ */
+enum class AirplaneValue(val yamlValue: String) {
+    Enable("enabled"),
+    Disable("disabled"),
 }
 
 data class SetAirplaneModeCommand(
@@ -1846,6 +1845,113 @@ data class ToggleAirplaneModeCommand(
             appendLine(
                 """
                 |toggleAirplaneMode
+                """
+            )
+        }
+        return yamlString
+    }
+}
+
+/**
+ * [yamlValue] is the word written in YAML. It is deliberately NOT a `@JsonProperty` on each constant:
+ * Jackson serializes this enum as `SetDarkModeCommand.value` on the MaestroCommand wire, where the
+ * constant name is what is written and read back, so renaming it there would break every command already
+ * persisted or in flight. The schema reads the word through `@YamlValues(spelledBy = "yamlValue")`.
+ */
+enum class DarkModeValue(val yamlValue: String) {
+    Enable("enabled"),
+    Disable("disabled"),
+}
+
+data class SetDarkModeCommand(
+    val value: DarkModeValue,
+    override val label: String? = null,
+    override val optional: Boolean = false,
+) : Command {
+    override val originalDescription: String
+        get() = when (value) {
+            DarkModeValue.Enable -> "Enable dark mode"
+            DarkModeValue.Disable -> "Disable dark mode"
+        }
+
+    override fun evaluateScripts(jsEngine: JsEngine): Command {
+        return this
+    }
+
+    override fun yamlString(): String {
+        val yamlString = buildString {
+            appendLine(
+                """
+                |setDarkMode
+                """
+            )
+        }
+        return yamlString
+    }
+}
+
+data class ToggleDarkModeCommand(
+    override val label: String? = null,
+    override val optional: Boolean = false,
+) : Command {
+    override val originalDescription: String
+        get() = "Toggle dark mode"
+
+    override fun evaluateScripts(jsEngine: JsEngine): Command {
+        return this
+    }
+
+    override fun yamlString(): String {
+        val yamlString = buildString {
+            appendLine(
+                """
+                |toggleDarkMode
+                """
+            )
+        }
+        return yamlString
+    }
+}
+
+data class AssertDarkModeCommand(
+    override val label: String? = null,
+    override val optional: Boolean = false,
+) : Command {
+    override val originalDescription: String
+        get() = "Assert dark mode is enabled"
+
+    override fun evaluateScripts(jsEngine: JsEngine): Command {
+        return this
+    }
+
+    override fun yamlString(): String {
+        val yamlString = buildString {
+            appendLine(
+                """
+                |assertDarkMode
+                """
+            )
+        }
+        return yamlString
+    }
+}
+
+data class AssertLightModeCommand(
+    override val label: String? = null,
+    override val optional: Boolean = false,
+) : Command {
+    override val originalDescription: String
+        get() = "Assert dark mode is disabled"
+
+    override fun evaluateScripts(jsEngine: JsEngine): Command {
+        return this
+    }
+
+    override fun yamlString(): String {
+        val yamlString = buildString {
+            appendLine(
+                """
+                |assertLightMode
                 """
             )
         }

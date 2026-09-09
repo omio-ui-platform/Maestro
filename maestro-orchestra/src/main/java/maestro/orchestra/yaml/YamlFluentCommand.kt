@@ -26,6 +26,8 @@ import maestro.Point
 import maestro.TapRepeat
 import maestro.orchestra.AddMediaCommand
 import maestro.orchestra.AssertConditionCommand
+import maestro.orchestra.AssertDarkModeCommand
+import maestro.orchestra.AssertLightModeCommand
 import maestro.orchestra.AssertNoDefectsWithAICommand
 import maestro.orchestra.AssertVisualCommand
 import maestro.orchestra.AssertScreenshotCommand
@@ -61,6 +63,7 @@ import maestro.orchestra.RunScriptCommand
 import maestro.orchestra.ScrollCommand
 import maestro.orchestra.ScrollUntilVisibleCommand
 import maestro.orchestra.SetAirplaneModeCommand
+import maestro.orchestra.SetDarkModeCommand
 import maestro.orchestra.SetLocationCommand
 import maestro.orchestra.SetOrientationCommand
 import maestro.orchestra.SetPermissionsCommand
@@ -73,10 +76,12 @@ import maestro.orchestra.TakeScreenshotCommand
 import maestro.orchestra.TapOnElementCommand
 import maestro.orchestra.TapOnPointV2Command
 import maestro.orchestra.ToggleAirplaneModeCommand
+import maestro.orchestra.ToggleDarkModeCommand
 import maestro.orchestra.TravelCommand
 import maestro.orchestra.WaitForAnimationToEndCommand
 import maestro.orchestra.SleepCommand
 import maestro.orchestra.error.InvalidFlowFile
+import maestro.orchestra.yaml.schema.YamlValues
 import maestro.orchestra.error.MediaFileNotFound
 import maestro.orchestra.error.SyntaxError
 import maestro.orchestra.util.Env.withEnv
@@ -123,9 +128,9 @@ data class YamlFluentCommand(
     val setPermissions: YamlSetPermissions? = null,
     val swipe: YamlSwipe? = null,
     val openLink: YamlOpenLink? = null,
-    val openBrowser: String? = null,
     val pressKey: YamlPressKey? = null,
     val eraseText: YamlEraseText? = null,
+    @YamlValues(YamlNavigationAction::class, spelledBy = "yamlValue")
     val action: String? = null,
     val takeScreenshot: YamlTakeScreenshot? = null,
     val extendedWaitUntil: YamlExtendedWaitUntil? = null,
@@ -149,6 +154,10 @@ data class YamlFluentCommand(
     val addMedia: YamlAddMedia? = null,
     val setAirplaneMode: YamlSetAirplaneMode? = null,
     val toggleAirplaneMode: YamlToggleAirplaneMode? = null,
+    val setDarkMode: YamlSetDarkMode? = null,
+    val toggleDarkMode: YamlToggleDarkMode? = null,
+    val assertDarkMode: YamlAssertDarkMode? = null,
+    val assertLightMode: YamlAssertLightMode? = null,
     val retry: YamlRetryCommand? = null,
     @JsonIgnore val _sourceInfo: SourceInfo,
 ) {
@@ -322,14 +331,14 @@ data class YamlFluentCommand(
 
             eraseText != null -> listOf(eraseCommand(eraseText))
             action != null -> listOf(
-                when (action) {
-                    "back" -> MaestroCommand(BackPressCommand())
-                    "hideKeyboard" -> MaestroCommand(HideKeyboardCommand())
-                    "scroll" -> MaestroCommand(ScrollCommand())
-                    "clearKeychain" -> MaestroCommand(ClearKeychainCommand())
-                    "pasteText" -> MaestroCommand(PasteTextCommand())
-                    "sleep" -> MaestroCommand(SleepCommand())
-                    else -> error("Unknown navigation target: $action")
+                when (YamlNavigationAction.entries.firstOrNull { it.yamlValue == action }) {
+                    YamlNavigationAction.Back -> MaestroCommand(BackPressCommand())
+                    YamlNavigationAction.HideKeyboard -> MaestroCommand(HideKeyboardCommand())
+                    YamlNavigationAction.Scroll -> MaestroCommand(ScrollCommand())
+                    YamlNavigationAction.ClearKeychain -> MaestroCommand(ClearKeychainCommand())
+                    YamlNavigationAction.PasteText -> MaestroCommand(PasteTextCommand())
+                    YamlNavigationAction.Sleep -> MaestroCommand(SleepCommand())
+                    null -> error("Unknown navigation target: $action")
                 }
             )
 
@@ -535,6 +544,43 @@ data class YamlFluentCommand(
                     ToggleAirplaneModeCommand(
                         toggleAirplaneMode.label,
                         toggleAirplaneMode.optional
+                    )
+                )
+            )
+
+            setDarkMode != null -> listOf(
+                MaestroCommand(
+                    SetDarkModeCommand(
+                        setDarkMode.value,
+                        setDarkMode.label,
+                        setDarkMode.optional
+                    )
+                )
+            )
+
+            toggleDarkMode != null -> listOf(
+                MaestroCommand(
+                    ToggleDarkModeCommand(
+                        toggleDarkMode.label,
+                        toggleDarkMode.optional
+                    )
+                )
+            )
+
+            assertDarkMode != null -> listOf(
+                MaestroCommand(
+                    AssertDarkModeCommand(
+                        assertDarkMode.label,
+                        assertDarkMode.optional
+                    )
+                )
+            )
+
+            assertLightMode != null -> listOf(
+                MaestroCommand(
+                    AssertLightModeCommand(
+                        assertLightMode.label,
+                        assertLightMode.optional
                     )
                 )
             )
@@ -957,16 +1003,11 @@ data class YamlFluentCommand(
             }
 
             is YamlSwipeElement -> return swipeElementCommand(swipe)
-            else -> {
-                throw IllegalStateException(
-                    "Provide swipe direction UP, DOWN, RIGHT OR LEFT or by giving explicit " +
-                            "start and end coordinates."
-                )
-            }
         }
     }
 
     private fun swipeElementCommand(swipeElement: YamlSwipeElement): MaestroCommand {
+        val relativePoint = (swipeElement.from as? YamlElementSelector)?.point
         return MaestroCommand(
             swipeCommand = SwipeCommand(
                 direction = swipeElement.direction,
@@ -974,7 +1015,8 @@ data class YamlFluentCommand(
                 duration = swipeElement.duration,
                 label = swipeElement.label,
                 optional = swipeElement.optional,
-                waitToSettleTimeoutMs = swipeElement.waitToSettleTimeoutMs
+                waitToSettleTimeoutMs = swipeElement.waitToSettleTimeoutMs,
+                relativePoint = relativePoint,
             )
         )
     }

@@ -18,8 +18,9 @@ maestro-orchestra/src/test/resources/media/assets/*
 local/
 
 .idea/
-CLAUDE.md
-.claude/
+
+# Claude Code project config is tracked; personal overrides are not
+.claude/settings.local.json
 
 # Ignore iOS intermediate build directory
 /driver-iPhoneSimulator/

@@ -61,34 +61,50 @@ object DeviceService {
             }
 
             Platform.ANDROID -> {
-                PrintUtils.message("Launching Emulator...")
                 val androidSpec = device.deviceSpec as DeviceSpec.Android
-                val emulatorBinary = requireEmulatorBinary()
 
-                ProcessBuilder(
-                    emulatorBinary.absolutePath,
-                    "-avd",
-                    device.modelId,
-                    "-netdelay",
-                    "none",
-                    "-netspeed",
-                    "full"
-                ).start().waitFor(10, TimeUnit.SECONDS)
+                // If the requested AVD is already running, reuse it: the emulator refuses to launch
+                // a duplicate of a running AVD (without -read-only), so we'd otherwise wait 60s for a
+                // device that never appears and then fail.
+                val runningSerial = listConnectedDevices()
+                    .firstOrNull { it.description == device.modelId }
+                    ?.instanceId
 
-                var lastException: Exception? = null
+                val connection = if (runningSerial != null) {
+                    PrintUtils.message("Device ${device.modelId} is already running, reusing it.")
+                    AndroidDeviceConnection.byId(
+                        deviceId = runningSerial,
+                        driverHostPort = driverHostPort ?: AndroidDeviceConnection.DEFAULT_DRIVER_HOST_PORT,
+                    ) ?: throw DeviceError("Unable to connect to already-running device: ${device.modelId}")
+                } else {
+                    PrintUtils.message("Launching Emulator...")
+                    val emulatorBinary = requireEmulatorBinary()
 
-                val connection = MaestroTimer.withTimeout(60000) {
-                    try {
-                        AndroidDeviceConnection.newestNotIn(
-                            connectedSerials = connectedDevices,
-                            driverHostPort = driverHostPort ?: AndroidDeviceConnection.DEFAULT_DRIVER_HOST_PORT,
-                        )
-                    } catch (ignored: Exception) {
-                        Thread.sleep(100)
-                        lastException = ignored
-                        null
-                    }
-                } ?: throw DeviceError("Unable to start device: ${device.modelId}", lastException)
+                    ProcessBuilder(
+                        emulatorBinary.absolutePath,
+                        "-avd",
+                        device.modelId,
+                        "-netdelay",
+                        "none",
+                        "-netspeed",
+                        "full"
+                    ).start().waitFor(10, TimeUnit.SECONDS)
+
+                    var lastException: Exception? = null
+
+                    MaestroTimer.withTimeout(60000) {
+                        try {
+                            AndroidDeviceConnection.newestNotIn(
+                                connectedSerials = connectedDevices,
+                                driverHostPort = driverHostPort ?: AndroidDeviceConnection.DEFAULT_DRIVER_HOST_PORT,
+                            )
+                        } catch (ignored: Exception) {
+                            Thread.sleep(100)
+                            lastException = ignored
+                            null
+                        }
+                    } ?: throw DeviceError("Unable to start device: ${device.modelId}", lastException)
+                }
 
                 // The boot/setup connection is only needed to install the driver app + set the locale;
                 // close it once setup is done so its adb socket doesn't leak (the device stays booted).
@@ -521,15 +537,11 @@ object DeviceService {
      * @param deviceName Any device name
      * @param device Device type as specified by the Android SDK i.e. "pixel_6"
      * @param systemImage Full system package i.e "system-images;android-28;google_apis;x86_64"
-     * @param tag google apis or playstore tag i.e. google_apis or google_apis_playstore
-     * @param abi x86_64, x86, arm64 etc..
      */
     fun createAndroidDevice(
         deviceName: String,
         device: String,
         systemImage: String,
-        tag: String,
-        abi: String,
         force: Boolean = false,
     ): String {
         val avd = requireAvdManagerBinary()
@@ -539,8 +551,6 @@ object DeviceService {
             "create", "avd",
             "--name", name,
             "--package", systemImage,
-            "--tag", tag,
-            "--abi", abi,
             "--device", device,
         )
 
