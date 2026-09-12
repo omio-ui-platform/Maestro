@@ -116,6 +116,16 @@ interface Driver {
 
     fun setDarkMode(enabled: Boolean)
 
+    /**
+     * Puts the device into [locale], given as a BCP 47 tag (`de-DE`, `pt-BR`, `zh-Hans`).
+     *
+     * Defaulted rather than abstract because only real devices have a locale to set; a browser or a
+     * viewer has none, and saying so beats a silent no-op that would let a localization test pass
+     * without ever changing language.
+     */
+    fun setDeviceLocale(locale: String): Unit =
+        throw UnsupportedOperationException("Setting the device locale is not supported on this platform")
+
     fun setAndroidChromeDevToolsEnabled(enabled: Boolean) = Unit
 
     fun queryOnDeviceElements(query: OnDeviceElementQuery): List<TreeNode> {

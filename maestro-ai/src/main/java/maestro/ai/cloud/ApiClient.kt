@@ -33,6 +33,18 @@ data class FindDefectsResponse(
 )
 
 @Serializable
+data class LanguageViolation(
+    val text: String,
+    val detectedLanguage: String,
+    val reasoning: String,
+)
+
+@Serializable
+data class AssertLanguageResponse(
+    val violations: List<LanguageViolation>,
+)
+
+@Serializable
 data class ExtractTextWithAiRequest(
     val query: String,
     val screen: ByteArray,

@@ -1,6 +1,7 @@
 package maestro.ai
 
 import maestro.ai.cloud.Defect
+import maestro.ai.cloud.LanguageViolation
 import maestro.ai.cloud.ExtractPointValidationResponse
 import maestro.ai.cloud.ExtractPointWithReasoningResponse
 
@@ -8,6 +9,7 @@ interface AIPredictionEngine {
     suspend fun findDefects(screen: ByteArray, aiClient: AI): List<Defect>
     suspend fun performAssertion(screen: ByteArray, aiClient: AI, assertion: String): Defect?
     suspend fun extractText(screen: ByteArray, aiClient: AI, query: String): String
+    suspend fun assertLanguage(screen: ByteArray, aiClient: AI, language: String, languageTag: String, ignore: List<String> = emptyList(), onScreenText: String? = null): List<LanguageViolation>
     suspend fun extractPoint(screen: ByteArray, aiClient: AI, query: String): String
     suspend fun extractPointWithReasoning(screen: ByteArray, aiClient: AI, query: String, viewHierarchy: String? = null): ExtractPointWithReasoningResponse?
     suspend fun extractPointRefined(croppedScreen: ByteArray, aiClient: AI, query: String, contextDescription: String): ExtractPointWithReasoningResponse?

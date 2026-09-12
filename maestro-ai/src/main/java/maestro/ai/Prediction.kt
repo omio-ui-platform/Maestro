@@ -1,11 +1,14 @@
 package maestro.ai
 
 import maestro.ai.cloud.Defect
+import maestro.ai.openai.OpenAI
+import maestro.ai.cloud.LanguageViolation
 import maestro.ai.cloud.ExtractPointValidationResponse
 import maestro.ai.cloud.ExtractPointWithReasoningResponse
 import maestro.ai.cloud.OpenAIClient
 
 object Prediction {
+    private const val MAESTRO_CLI_AI_MODEL = "MAESTRO_CLI_AI_MODEL"
     private val openApi = OpenAIClient()
 
     suspend fun findDefects(
@@ -29,6 +32,28 @@ object Prediction {
             return response.defects.firstOrNull()
         }
         return null
+    }
+
+    suspend fun assertLanguage(
+        aiClient: AI?,
+        language: String,
+        languageTag: String,
+        screen: ByteArray,
+        ignore: List<String>,
+        onScreenText: String?,
+    ): List<LanguageViolation> {
+        if (aiClient == null) return listOf()
+        // Structured output is an OpenAI feature; the Claude client drops `jsonSchema` silently
+        // (see AI.chatCompletion). Failing here beats parsing prose leniently, because a lenient
+        // parse of an unstructured reply yields "no violations" -- a green assertion that checked
+        // nothing, on a command whose whole job is to fail.
+        if (aiClient !is OpenAI) {
+            throw IllegalStateException(
+                "assertLanguageWithAI needs an OpenAI model, but $MAESTRO_CLI_AI_MODEL selected " +
+                    "${aiClient::class.simpleName}. Structured JSON output is not implemented for it."
+            )
+        }
+        return openApi.assertLanguageWithAi(aiClient, language, languageTag, screen, ignore, onScreenText).violations
     }
 
     suspend fun extractText(

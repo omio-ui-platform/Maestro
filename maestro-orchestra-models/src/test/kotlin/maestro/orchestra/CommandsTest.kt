@@ -10,6 +10,25 @@ import org.junit.jupiter.api.Test
 
 class CommandsTest {
 
+    @Test
+    fun `AssertLanguageWithAICommand evaluateScripts interpolates the language and every ignore entry`() {
+        GraalJsEngine(platform = "android").use { jsEngine ->
+            jsEngine.putEnv("RUN_LOCALE", "it")
+            jsEngine.putEnv("BRAND", "Omio")
+            jsEngine.putEnv("SCREEN_IGNORE", "")
+
+            val evaluated = AssertLanguageWithAICommand(
+                language = "\${RUN_LOCALE}",
+                ignore = listOf("\${BRAND}", "Berlin Hbf", "\${SCREEN_IGNORE}"),
+            ).evaluateScripts(jsEngine) as AssertLanguageWithAICommand
+
+            assertEquals("it", evaluated.language)
+            // The blank third entry survives interpolation; dropping it is the filter's job, so a
+            // flow can pass an optional ignore variable that resolves to nothing.
+            assertEquals(listOf("Omio", "Berlin Hbf", ""), evaluated.ignore)
+        }
+    }
+
     // https://github.com/mobile-dev-inc/Maestro/issues/2416
     @Test
     fun `LaunchAppCommand evaluateScripts interpolates permission values but not names`() {

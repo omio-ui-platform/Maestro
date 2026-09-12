@@ -1,0 +1,7 @@
+appId: com.example.app
+---
+- assertLanguageWithAI:
+    language: German
+    ignore:
+      - Omio
+      - "/Booking\\.com|Trainline/"

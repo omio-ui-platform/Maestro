@@ -53,6 +53,7 @@ import org.slf4j.LoggerFactory
 import org.w3c.dom.Element
 import org.w3c.dom.Node
 import java.io.File
+import java.util.Locale
 import java.io.IOException
 import java.util.Base64
 import java.util.concurrent.CompletableFuture
@@ -846,6 +847,31 @@ class AndroidDriver(
         }
     }
 
+    override fun setDeviceLocale(locale: String) {
+        metrics.measured("operation", mapOf("command" to "setDeviceLocale", "locale" to locale)) {
+            val parsed = Locale.forLanguageTag(locale.replace('_', '-'))
+            val language = parsed.language
+            val country = parsed.country
+
+            if (language.isEmpty()) {
+                throw IllegalArgumentException("\"$locale\" is not a locale Android can be put into")
+            }
+            // Android's locale is a language/country pair all the way down -- the on-device receiver
+            // builds a java.util.Locale from the two -- so a bare language has no country to pair and
+            // would silently fall back to the receiver's default rather than failing.
+            if (country.isEmpty()) {
+                throw IllegalArgumentException(
+                    "Android needs a region alongside the language: use \"$language-XX\" rather than \"$locale\""
+                )
+            }
+
+            when (val result = setDeviceLocale(country = country, language = language)) {
+                SET_LOCALE_RESULT_SUCCESS -> Unit
+                else -> throw IllegalStateException(describeSetLocaleFailure(locale, result))
+            }
+        }
+    }
+
     private fun broadcastAirplaneMode(enabled: Boolean) {
         val command = "am broadcast -a android.intent.action.AIRPLANE_MODE --ez state $enabled"
         try {
@@ -1451,6 +1477,19 @@ class AndroidDriver(
         const val SET_LOCALE_RESULT_SUCCESS = 0
         const val SET_LOCALE_RESULT_LOCALE_NOT_VALID = 1
         const val SET_LOCALE_RESULT_UPDATE_CONFIGURATION_FAILED = 2
+
+        /**
+         * Turns a [setDeviceLocale] result code into something a flow author can act on. Shared with
+         * DeviceService, which applies the same locale change while starting a device.
+         */
+        fun describeSetLocaleFailure(locale: String, result: Int): String = when (result) {
+            SET_LOCALE_RESULT_LOCALE_NOT_VALID ->
+                "Failed to set the device locale to $locale: the device does not support that locale"
+            SET_LOCALE_RESULT_UPDATE_CONFIGURATION_FAILED ->
+                "Failed to set the device locale to $locale: the device did not apply it in time"
+            else ->
+                "Failed to set the device locale to $locale: unexpected result $result"
+        }
 
         private const val SERVER_LAUNCH_TIMEOUT_MS = 15000L
         private const val MAESTRO_DRIVER_STARTUP_TIMEOUT = "MAESTRO_DRIVER_STARTUP_TIMEOUT"

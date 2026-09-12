@@ -33,6 +33,11 @@ import maestro.orchestra.ElementSelector
 import maestro.orchestra.InputTextCommand
 import maestro.orchestra.LaunchAppCommand
 import maestro.orchestra.MaestroCommand
+import maestro.orchestra.Command
+import okio.Buffer
+import maestro.ai.cloud.LanguageViolation
+import maestro.ai.cloud.Defect
+import maestro.test.drivers.FakeAIPredictionEngine
 import maestro.orchestra.MaestroConfig
 import maestro.orchestra.MaestroOnFlowComplete
 import maestro.orchestra.Orchestra
@@ -5397,6 +5402,109 @@ class IntegrationTest {
         }
         assertThat(onCommandWarnedCalled).isTrue()
         assertThat(onCommandFailedCalled).isFalse()
+    }
+
+    @Test
+    fun `Case 160 - setDeviceLocale reaches the driver as a normalised language tag`() {
+        val commands = readCommands("160_set_device_locale") { mapOf("DEVICE_LOCALE" to "zh-Hans") }
+        val driver = driver { }
+
+        Maestro(driver).use {
+            runBlocking { orchestra(it).runFlow(commands) }
+        }
+
+        // Either separator is accepted from the flow and normalised before the driver sees it, so a
+        // driver never has to guess which form it was handed.
+        driver.assertHasEvent(FakeDriver.Event.SetDeviceLocale("de-DE"))
+        driver.assertHasEvent(FakeDriver.Event.SetDeviceLocale("pt-BR"))
+        driver.assertHasEvent(FakeDriver.Event.SetDeviceLocale("zh-Hans"))
+        assertThat(driver.deviceLocale()).isEqualTo("zh-Hans")
+    }
+
+    // ---- assertLanguageWithAI (fork) -------------------------------------------------------
+    // The engine is faked so these cover the command's own behaviour: what it sends the model, how it
+    // filters what comes back, and what a failure says.
+
+    private fun languageOrchestra(
+        maestro: Maestro,
+        engine: FakeAIPredictionEngine,
+        onCommandGeneratedOutput: (Command, List<Defect>, Buffer) -> Unit = { _, _, _ -> },
+        onCommandWarned: (Int, MaestroCommand) -> Unit = { _, _ -> },
+    ) = Orchestra(
+        maestro,
+        lookupTimeoutMs = 0L,
+        optionalLookupTimeoutMs = 0L,
+        AIPredictionEngine = engine,
+        onCommandGeneratedOutput = onCommandGeneratedOutput,
+        onCommandWarned = onCommandWarned,
+    )
+
+    private fun violation(text: String, language: String = "English") =
+        LanguageViolation(text = text, detectedLanguage = language, reasoning = "\"$text\" is $language")
+
+    @Test
+    fun `Case 155 - assertLanguageWithAI passes when the model reports no violations`() {
+        val commands = readCommands("155_assert_language")
+        val driver = driver { element { text = "Anmelden"; bounds = Bounds(0, 0, 100, 50) } }
+        val engine = FakeAIPredictionEngine()
+
+        Maestro(driver).use {
+            runBlocking { languageOrchestra(it, engine).runFlow(commands) }
+        }
+
+        // The language name reaches the model, not the raw code, and the tag rides alongside it.
+        assertThat(engine.assertLanguageCalls).hasSize(1)
+        assertThat(engine.assertLanguageCalls.first().language).isEqualTo("German")
+        assertThat(engine.assertLanguageCalls.first().languageTag).isEqualTo("de")
+        // On-screen text is extracted from the hierarchy and handed over as plain strings.
+        assertThat(engine.assertLanguageCalls.first().onScreenText).contains("Anmelden")
+    }
+
+    @Test
+    fun `Case 155 - assertLanguageWithAI fails naming every untranslated string`() {
+        val commands = readCommands("155_assert_language")
+        val driver = driver { element { text = "Sign in"; bounds = Bounds(0, 0, 100, 50) } }
+        val engine = FakeAIPredictionEngine(listOf(violation("Sign in"), violation("Best deals")))
+        val generatedOutput = mutableListOf<List<Defect>>()
+
+        val error = assertThrows<MaestroException.AssertionFailure> {
+            Maestro(driver).use {
+                runBlocking {
+                    languageOrchestra(it, engine, onCommandGeneratedOutput = { _, defects, _ ->
+                        generatedOutput += defects
+                    }).runFlow(commands)
+                }
+            }
+        }
+
+        assertThat(error.message).contains("Screen is not fully in German [de]")
+        assertThat(error.message).contains("2 untranslated strings")
+        assertThat(error.message).contains("\"Sign in\"")
+        assertThat(error.message).contains("\"Best deals\"")
+        // Its own category, so the AI report does not label it as an assertNoDefectsWithAI finding.
+        assertThat(generatedOutput).hasSize(1)
+        assertThat(generatedOutput.first().map { it.category }).containsExactly("untranslated", "untranslated")
+    }
+
+    @Test
+    fun `Case 157 - assertLanguageWithAI suppresses ignored strings and says how many`() {
+        val commands = readCommands("157_assert_language_ignore")
+        val driver = driver { element { text = "Sign in"; bounds = Bounds(0, 0, 100, 50) } }
+        // Omio matches a literal entry, Booking.com the regex, so only "Sign in" should survive.
+        val engine = FakeAIPredictionEngine(
+            listOf(violation("Omio"), violation("Booking.com"), violation("Sign in")),
+        )
+
+        val error = assertThrows<MaestroException.AssertionFailure> {
+            Maestro(driver).use {
+                runBlocking { languageOrchestra(it, engine).runFlow(commands) }
+            }
+        }
+
+        assertThat(error.message).contains("1 untranslated string")
+        assertThat(error.message).contains("\"Sign in\"")
+        assertThat(error.message).doesNotContain("Booking.com")
+        assertThat(error.message).contains("2 further matches suppressed by `ignore`")
     }
 
     private fun readCommands(

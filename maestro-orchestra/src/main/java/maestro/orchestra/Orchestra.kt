@@ -63,6 +63,9 @@ import maestro.orchestra.filter.FilterWithDescription
 import maestro.orchestra.filter.TraitFilters
 import maestro.orchestra.geo.Traveller
 import maestro.orchestra.util.ImageCropUtil
+import maestro.orchestra.util.VisibleTextExtractor
+import maestro.orchestra.util.LanguageViolationFilter
+import maestro.orchestra.util.ExpectedLanguage
 import maestro.orchestra.util.ViewHierarchySerializer
 import maestro.orchestra.util.calculateElementRelativePoint
 import maestro.orchestra.util.Env.evaluateScripts
@@ -468,6 +471,8 @@ class Orchestra(
             is AssertConditionCommand -> assertConditionCommand(command)
             is AssertNoDefectsWithAICommand -> assertNoDefectsWithAICommand(command, maestroCommand)
             is AssertWithAICommand -> assertWithAICommand(command, maestroCommand)
+            is AssertLanguageWithAICommand -> assertLanguageWithAICommand(command, maestroCommand)
+            is SetDeviceLocaleCommand -> setDeviceLocaleCommand(command)
             is ExtractTextWithAICommand -> extractTextWithAICommand(command, maestroCommand)
             is ExtractPointWithAICommand -> extractPointWithAICommand(command, maestroCommand)
             is ExtractComponentWithAICommand -> extractComponentWithAICommand(command, maestroCommand)
@@ -628,6 +633,92 @@ class Orchestra(
         }
 
         return false
+    }
+
+    private suspend fun setDeviceLocaleCommand(command: SetDeviceLocaleCommand): Boolean {
+        // Shape is checked here rather than in the driver so the error is identical on every
+        // platform, and checked at execution because `${...}` is only resolved by now.
+        val locale = ExpectedLanguage.parse(command.locale)
+            ?: throw MaestroException.InvalidCommand(
+                "setDeviceLocale: \"${command.locale}\" is not a locale. Use a language tag such as " +
+                    "de-DE, pt-BR or zh-Hans."
+            )
+
+        maestro.setDeviceLocale(locale.tag)
+        return true
+    }
+
+    private suspend fun assertLanguageWithAICommand(
+        command: AssertLanguageWithAICommand,
+        maestroCommand: MaestroCommand
+    ): Boolean {
+        val metadata = getMetadata(maestroCommand)
+
+        // Resolved first, so a typo costs nothing: a screenshot and an AI call are both wasted on a
+        // language nobody can name. `${...}` has already been evaluated by the time this runs, which
+        // is why the check cannot live in the parser.
+        val expected = ExpectedLanguage.parse(command.language)
+            ?: throw MaestroException.InvalidCommand(
+                "assertLanguageWithAI: \"${command.language}\" does not name a language. Use an " +
+                    "ISO 639-1 code (de, pt-BR, en-GB) or an English language name (German)."
+            )
+
+        val imageData = Buffer()
+        maestro.takeScreenshot(imageData, compressed = false)
+
+        // One snapshot, used for both the model input and the failure's attached hierarchy. Two
+        // snapshots would cost a second round trip (~1s) and could disagree if the screen moved
+        // between them, leaving the reported strings describing a different screen than the dump.
+        val hierarchy = try {
+            maestro.viewHierarchy()
+        } catch (e: Exception) {
+            logger.warn("Could not read the view hierarchy for the language assertion: ${e.message}")
+            null
+        }
+        val onScreenText = hierarchy?.let { VisibleTextExtractor.extract(it).render() }
+
+        val violations = AIPredictionEngine.assertLanguage(
+            screen = imageData.copy().readByteArray(),
+            aiClient = ai,
+            language = expected.displayName,
+            languageTag = expected.tag,
+            ignore = command.ignore.filter { it.isNotBlank() },
+            onScreenText = onScreenText,
+        )
+
+        val filtered = LanguageViolationFilter.apply(violations, command.ignore) { it.text }
+        if (filtered.kept.isEmpty()) return false
+
+        val defects = filtered.kept.map {
+            Defect(
+                // Not "localization": that category belongs to assertNoDefectsWithAI, and the two
+                // are rendered by the same badge in the AI report.
+                category = "untranslated",
+                reasoning = "\"${it.text}\" looks ${it.detectedLanguage}, expected ${expected.displayName}: ${it.reasoning}",
+            )
+        }
+        dispatch("onAIArtifactGenerated") { it.onAIArtifactGenerated(imageData.copy(), defects.size) }
+        onCommandGeneratedOutput(command, defects, imageData)
+
+        val word = if (filtered.kept.size == 1) "string" else "strings"
+        val reasoning = buildString {
+            append("Screen is not fully in ${expected.describe()}: ${filtered.kept.size} untranslated $word")
+            filtered.kept.forEach { append("\n- \"${it.text}\" (${it.detectedLanguage}): ${it.reasoning}") }
+            if (filtered.suppressed > 0) {
+                val matches = if (filtered.suppressed == 1) "match" else "matches"
+                append("\n(${filtered.suppressed} further $matches suppressed by `ignore`)")
+            }
+        }
+
+        updateMetadata(maestroCommand, metadata.copy(aiReasoning = reasoning))
+
+        throw MaestroException.AssertionFailure(
+            message = reasoning,
+            hierarchyRoot = hierarchy?.root ?: TreeNode(),
+            debugMessage = "AI-powered language assertion failed. Check the screenshot in debug artifacts: " +
+                "either these strings are genuinely untranslated, or they are proper nouns the check " +
+                "misjudged and belong in the command's `ignore` list.",
+        )
     }
 
     private suspend fun assertWithAICommand(command: AssertWithAICommand, maestroCommand: MaestroCommand): Boolean {

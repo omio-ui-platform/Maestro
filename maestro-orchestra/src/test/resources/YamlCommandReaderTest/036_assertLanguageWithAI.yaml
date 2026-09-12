@@ -1,0 +1,13 @@
+appId: com.example.app
+---
+- assertLanguageWithAI: German
+- assertLanguageWithAI:
+    language: Italian
+    ignore:
+      - Omio
+      - Berlin Hbf
+- assertLanguageWithAI:
+    language: French
+    optional: true
+    label: Checkout screen is French
+- assertLanguageWithAI: ${RUN_LOCALE}

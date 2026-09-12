@@ -1,0 +1,9 @@
+appId: com.example.app
+---
+- setDeviceLocale: de-DE
+- setDeviceLocale:
+    locale: pt_BR
+    label: Switch to Brazilian Portuguese
+- setDeviceLocale:
+    locale: ${DEVICE_LOCALE}
+    optional: true

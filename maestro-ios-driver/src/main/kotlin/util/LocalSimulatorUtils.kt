@@ -708,6 +708,38 @@ class LocalSimulatorUtils(private val tempFileHandler: TempFileHandler) {
         }
     }
 
+    /** What a simulator currently reports for the two keys that decide the app's language. */
+    data class SimulatorLocaleState(
+        val languages: List<String>,
+        val locale: String?,
+    )
+
+    /**
+     * Reads `AppleLanguages` and `AppleLocale` back off the simulator, so a caller can skip work the
+     * device has already done. Both matter and for different reasons: `AppleLanguages` picks which
+     * `.lproj` bundle the app loads, `AppleLocale` only drives date and number formatting. A device
+     * carrying one but not the other is in a half-applied state and must be set again.
+     *
+     * Uses a plain [ProcessBuilder] rather than [CommandLineUtils.runCommand], which sends stdout to
+     * /dev/null unless handed an output file -- see [list] for the same approach.
+     */
+    fun readDeviceLocaleState(deviceId: String): SimulatorLocaleState = SimulatorLocaleState(
+        languages = SimctlDefaultsParser.parseArray(readDefault(deviceId, "AppleLanguages")),
+        locale = SimctlDefaultsParser.parseScalar(readDefault(deviceId, "AppleLocale")),
+    )
+
+    private fun readDefault(deviceId: String, key: String): String? = try {
+        val process = ProcessBuilder(
+            listOf("xcrun", "simctl", "spawn", deviceId, "defaults", "read", ".GlobalPreferences.plist", key)
+        ).redirectErrorStream(true).start()
+        val output = String(process.inputStream.readBytes())
+        process.waitFor()
+        output
+    } catch (e: Exception) {
+        logger.info("Could not read $key for $deviceId: ${e.message}")
+        null
+    }
+
     fun setDeviceLanguage(deviceId: String, language: String) {
         runCommand(
             listOf(

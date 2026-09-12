@@ -772,6 +772,10 @@ class Maestro(
         driver.setDarkMode(enabled)
     }
 
+    suspend fun setDeviceLocale(locale: String) = runInterruptible(Dispatchers.IO) {
+        driver.setDeviceLocale(locale)
+    }
+
     suspend fun setAndroidChromeDevToolsEnabled(enabled: Boolean) = runInterruptible(Dispatchers.IO) {
         driver.setAndroidChromeDevToolsEnabled(enabled)
     }

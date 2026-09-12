@@ -547,6 +547,52 @@ class IOSDriver(
         }
     }
 
+    /**
+     * Writes the simulator's language and region preferences.
+     *
+     * Deliberately does NOT restart the simulator. An app reads `AppleLanguages` when it launches, so
+     * a flow that relaunches the app after this -- which it must, to see the new language -- is
+     * enough. Restarting would tear down the XCTest runner driving the session for no gain. The
+     * system UI keeps its old language until a respring; the app under test is what matters here.
+     */
+    override fun setDeviceLocale(locale: String) {
+        metrics.measured("operation", mapOf("command" to "setDeviceLocale", "locale" to locale)) {
+            val deviceId = iosDevice.deviceId
+                ?: throw IllegalStateException("Cannot set the locale: this iOS device has no id")
+
+            val simulatorUtils = LocalSimulatorUtils(TempFileHandler())
+            val isSimulator = runCatching {
+                simulatorUtils.list().devices.values.flatten().any { it.udid == deviceId }
+            }.getOrDefault(false)
+            if (!isSimulator) {
+                throw UnsupportedOperationException(
+                    "Setting the locale of a physical iOS device is not supported; $deviceId is not a simulator"
+                )
+            }
+
+            // AppleLanguages takes the hyphenated tag and picks the .lproj bundle; AppleLocale takes
+            // the underscored form and only affects date and number formatting. Both are set, because
+            // an app in German with English dates is not a localized app.
+            val languageTag = locale.replace('_', '-')
+            val localeCode = languageTag.replace('-', '_')
+
+            simulatorUtils.setDeviceLanguage(deviceId, languageTag)
+            simulatorUtils.setDeviceLocale(deviceId, localeCode)
+
+            // Read back rather than trust the write: a runtime that lacks the language accepts the
+            // preference and then falls back at launch, which would surface as "the whole screen is
+            // English" and be blamed on the app.
+            val applied = simulatorUtils.readDeviceLocaleState(deviceId)
+            val appliedLanguage = applied.languages.firstOrNull()
+            if (appliedLanguage?.equals(languageTag, ignoreCase = true) != true) {
+                throw IllegalStateException(
+                    "Set the simulator language to $languageTag but it reads back as " +
+                        "${appliedLanguage ?: "unset"}; the runtime may not include that language"
+                )
+            }
+        }
+    }
+
     private fun addMediaToDevice(mediaFile: File) {
         metrics.measured("operation", mapOf("command" to "addMediaToDevice")) {
             val namedSource = NamedSource(

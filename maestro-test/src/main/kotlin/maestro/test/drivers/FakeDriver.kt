@@ -56,6 +56,7 @@ open class FakeDriver : Driver {
     private var airplaneMode: Boolean = false
 
     private var darkMode: Boolean = false
+    private var deviceLocale: String? = null
 
     // If true, keyboard will remain visible even after hideKeyboard() is called.
     var keyboardRemainsVisible: Boolean = false
@@ -429,6 +430,14 @@ open class FakeDriver : Driver {
         this.darkMode = enabled
     }
 
+    override fun setDeviceLocale(locale: String) {
+        ensureOpen()
+        events += Event.SetDeviceLocale(locale)
+        deviceLocale = locale
+    }
+
+    fun deviceLocale(): String? = deviceLocale
+
     override fun queryOnDeviceElements(query: OnDeviceElementQuery): List<TreeNode> {
         if (query is OnDeviceElementQuery.Css) {
             return searchCssRecursive(layout, query.css)
@@ -455,6 +464,10 @@ open class FakeDriver : Driver {
     }
 
     sealed class Event {
+
+        data class SetDeviceLocale(
+            val locale: String
+        ) : Event()
 
         data class Tap(
             val point: Point
