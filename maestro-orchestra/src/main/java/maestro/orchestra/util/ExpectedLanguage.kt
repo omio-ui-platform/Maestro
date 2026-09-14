@@ -10,14 +10,30 @@ import java.util.Locale
  * The [displayName] is what reaches the model; a name reads far better in a prompt than a code, and
  * pinning the [tag] alongside it disambiguates the pairs a name alone cannot (`en-GB` vs `en-US`,
  * `pt-BR` vs `pt-PT`).
+ *
+ * [languageName] is the same name without the parenthesised region, for the one-line failure
+ * message -- see [describeBriefly].
  */
 data class ExpectedLanguage(
     val tag: String,
     val displayName: String,
+    val languageName: String = displayName,
 ) {
 
     /** e.g. `German (Germany) [de-DE]`, or `German [de]` when no region was given. */
     fun describe(): String = "$displayName [$tag]"
+
+    /**
+     * e.g. `German [de-DE]` -- deliberately free of parentheses, unlike [describe].
+     *
+     * A failed flow's message is printed inline as ` (<message>)` on the result line
+     * (`TestSuiteStatusView.showFlowCompletion`), and the pipeline greps that line to build the
+     * Slack row. Its capture group is `(\s+\(.+\))?`, and `.` does not match a newline, so a
+     * parenthesis inside the message truncates the captured text at the wrong place and a second
+     * line is dropped entirely. Keeping this short, single-line and paren-free is what puts the
+     * offending strings on the Slack row instead of a mangled fragment.
+     */
+    fun describeBriefly(): String = "$languageName [$tag]"
 
     companion object {
 
@@ -43,7 +59,11 @@ data class ExpectedLanguage(
             val name = locale.getDisplayLanguage(Locale.ENGLISH)
             val region = locale.getDisplayCountry(Locale.ENGLISH)
             val displayName = if (region.isEmpty()) name else "$name ($region)"
-            return ExpectedLanguage(tag = locale.toLanguageTag(), displayName = displayName)
+            return ExpectedLanguage(
+                tag = locale.toLanguageTag(),
+                displayName = displayName,
+                languageName = name,
+            )
         }
 
         private fun fromEnglishName(raw: String): ExpectedLanguage? {

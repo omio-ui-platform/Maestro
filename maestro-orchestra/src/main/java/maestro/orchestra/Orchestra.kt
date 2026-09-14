@@ -700,8 +700,22 @@ class Orchestra(
         dispatch("onAIArtifactGenerated") { it.onAIArtifactGenerated(imageData.copy(), defects.size) }
         onCommandGeneratedOutput(command, defects, imageData)
 
+        // The thrown message is ONE line and names the strings, because that line is all a CI
+        // report shows: a failed flow prints it inline as ` (<message>)` and the pipeline greps
+        // that line for the Slack row. Listing the strings here is what makes the row triageable
+        // without opening an artifact; the per-string reasoning goes to `debugMessage` and to the
+        // `untranslated` defects above, both of which reach the AI report intact.
+        val quoted = filtered.kept.map { "\"${it.text}\"" }
+        val shown = quoted.take(MAX_UNTRANSLATED_LISTED)
+        val summary = buildString {
+            append("Not fully in ${expected.describeBriefly()} - ${filtered.kept.size} untranslated: ")
+            append(shown.joinToString(", "))
+            if (quoted.size > shown.size) append(" +${quoted.size - shown.size} more")
+            if (filtered.suppressed > 0) append(" [${filtered.suppressed} suppressed by ignore]")
+        }
+
         val word = if (filtered.kept.size == 1) "string" else "strings"
-        val reasoning = buildString {
+        val detail = buildString {
             append("Screen is not fully in ${expected.describe()}: ${filtered.kept.size} untranslated $word")
             filtered.kept.forEach { append("\n- \"${it.text}\" (${it.detectedLanguage}): ${it.reasoning}") }
             if (filtered.suppressed > 0) {
@@ -710,14 +724,14 @@ class Orchestra(
             }
         }
 
-        updateMetadata(maestroCommand, metadata.copy(aiReasoning = reasoning))
+        updateMetadata(maestroCommand, metadata.copy(aiReasoning = detail))
 
         throw MaestroException.AssertionFailure(
-            message = reasoning,
+            message = summary,
             hierarchyRoot = hierarchy?.root ?: TreeNode(),
-            debugMessage = "AI-powered language assertion failed. Check the screenshot in debug artifacts: " +
-                "either these strings are genuinely untranslated, or they are proper nouns the check " +
-                "misjudged and belong in the command's `ignore` list.",
+            debugMessage = detail + "\n\nEither these strings are genuinely untranslated, or they are " +
+                "proper nouns the check misjudged and belong in the command's `ignore` list. The " +
+                "screenshot is in the debug artifacts.",
         )
     }
 
@@ -2241,6 +2255,13 @@ class Orchestra(
 
         private const val MAX_ERASE_CHARACTERS = 50
         private const val MAX_RETRIES_ALLOWED = 3
+
+        /**
+         * How many untranslated strings the one-line assertLanguageWithAI failure names before it
+         * falls back to a count. The whole message has to stay short enough to read on a CI report
+         * row; the full list is in the debug message and the AI report either way.
+         */
+        private const val MAX_UNTRANSLATED_LISTED = 3
         private val logger = LoggerFactory.getLogger(Orchestra::class.java)
     }
 

@@ -5477,10 +5477,19 @@ class IntegrationTest {
             }
         }
 
-        assertThat(error.message).contains("Screen is not fully in German [de]")
-        assertThat(error.message).contains("2 untranslated strings")
+        // One line, no parentheses, strings named: a failed flow's message is printed inline as
+        // ` (<message>)` and the pipeline greps that line for the CI report, capturing with
+        // `(\s+\(.+\))?`. A newline or a parenthesis here truncates that capture, so the row
+        // would show a fragment instead of the strings.
+        assertThat(error.message).doesNotContain("\n")
+        assertThat(error.message).doesNotContain("(")
+        assertThat(error.message).contains("Not fully in German [de]")
+        assertThat(error.message).contains("2 untranslated")
         assertThat(error.message).contains("\"Sign in\"")
         assertThat(error.message).contains("\"Best deals\"")
+        // The per-string reasoning is still available, just not on the one-line message.
+        assertThat(error.debugMessage).contains("Screen is not fully in German [de]")
+        assertThat(error.debugMessage).contains("\"Sign in\" (English)")
         // Its own category, so the AI report does not label it as an assertNoDefectsWithAI finding.
         assertThat(generatedOutput).hasSize(1)
         assertThat(generatedOutput.first().map { it.category }).containsExactly("untranslated", "untranslated")
@@ -5501,10 +5510,12 @@ class IntegrationTest {
             }
         }
 
-        assertThat(error.message).contains("1 untranslated string")
+        assertThat(error.message).doesNotContain("\n")
+        assertThat(error.message).contains("1 untranslated")
         assertThat(error.message).contains("\"Sign in\"")
         assertThat(error.message).doesNotContain("Booking.com")
-        assertThat(error.message).contains("2 further matches suppressed by `ignore`")
+        assertThat(error.message).contains("[2 suppressed by ignore]")
+        assertThat(error.debugMessage).contains("2 further matches suppressed by `ignore`")
     }
 
     private fun readCommands(

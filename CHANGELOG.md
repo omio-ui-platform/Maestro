@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Core: add `assertLanguageWithAI` -- fails a screen whose user-visible text is not in the expected language, so a uniformly untranslated screen is caught (unlike `assertNoDefectsWithAI`, which only looks for mixed languages). Takes an ISO code or an English language name, plus an `ignore` list of literals or `/regex/`. Blocking by default; needs an OpenAI model
+- Core: add `assertLanguageWithAI` -- fails a screen whose user-visible text is not in the expected language, so a uniformly untranslated screen is caught (unlike `assertNoDefectsWithAI`, which only looks for mixed languages). Takes an ISO code or an English language name, plus an `ignore` list of literals or `/regex/`. Blocking by default; needs an OpenAI model. The failure message is a single paren-free line naming the offending strings, so CI tooling that greps the result line reports what is untranslated rather than a truncated fragment
 - Core: add `setDeviceLocale` -- puts the device into a language tag (`de-DE`, `pt-BR`, `zh-Hans`) so one flow can run in any language. Android applies it live; iOS writes the simulator's preferences without restarting it, so the session survives. Relaunch the app afterwards to see the change
 - Shared flows: resolve `app/<package>/<flows|scripts>/...` aliases against the flow's own checkout root (nearest ancestor holding `packages/`), so any checkout name or location works (git worktrees, per-task workspaces, clones not named `app`)
 - Shared flows: a worktree nested inside another checkout now resolves against itself, and a shared file it is missing is an error instead of a silent fallback to the parent checkout's copy

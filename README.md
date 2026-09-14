@@ -180,6 +180,11 @@ catches that.
   language check shown them reports the app's own ids as untranslated.
 - Failures are reported under their own `untranslated` category, so they are distinguishable from
   `assertNoDefectsWithAI` findings in the AI report.
+- The failure message is one line and names the offending strings
+  (`Not fully in German [de-DE] - 2 untranslated: "Sign in", "Best deals"`), capped at three with
+  `+N more`. A failed flow's message is printed inline as ` (<message>)` on the result line, and CI
+  tooling greps that line; a newline or a parenthesis in the message truncates what such a grep
+  captures, so the full per-string reasoning goes to the debug message and the AI report instead.
 - Needs an OpenAI model (`MAESTRO_CLI_AI_MODEL=gpt-*`); it fails fast on other providers, because
   structured JSON output is not implemented for them and a lenient parse would report "no
   violations" for a reply that was never checked.
