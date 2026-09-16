@@ -1,6 +1,7 @@
 package maestro.ai
 
 import maestro.ai.cloud.Defect
+import maestro.ai.cloud.LanguageViolation
 import maestro.ai.cloud.ExtractPointValidationResponse
 import maestro.ai.cloud.ExtractPointWithReasoningResponse
 
@@ -15,6 +16,17 @@ class CloudAIPredictionEngine() : AIPredictionEngine {
 
     override suspend fun extractText(screen: ByteArray, aiClient: AI, query: String): String {
         return Prediction.extractText(aiClient, query, screen)
+    }
+
+    override suspend fun assertLanguage(
+        screen: ByteArray,
+        aiClient: AI,
+        language: String,
+        languageTag: String,
+        ignore: List<String>,
+        onScreenText: String?,
+    ): List<LanguageViolation> {
+        return Prediction.assertLanguage(aiClient, language, languageTag, screen, ignore, onScreenText)
     }
 
     @Suppress("DEPRECATION")

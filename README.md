@@ -158,6 +158,59 @@ Screen recording during test execution with automatic upload to Google Cloud Sto
 - `196d536f` read max retry and attemp number from -e flags instead of system.env()
 - `8557b850` disable recording by default on local when env variables are not explicitly provided
 
+#### Localization testing (`assertLanguageWithAI`, `setDeviceLocale`)
+
+Runs the same flow in every supported language and fails when a screen is not fully translated.
+
+`assertLanguageWithAI` asks a model whether every user-visible string on the screen is in the
+expected language. Upstream's `assertNoDefectsWithAI` has a "localization" category, but it is
+defined as *inconsistent* language mixing, so a screen left entirely in English passes it -- which is
+the usual way a missing translation looks. This command is told which language to expect, so it
+catches that.
+
+- `language` accepts an ISO 639-1 code (`de`), a code with a region in either separator (`de_DE`,
+  `pt-BR`), a script-qualified tag (`zh-Hans`), or an English name (`German`). Validated at
+  execution, so `language: ${RUN_LOCALE}` works.
+- `ignore` silences strings that are untranslated by design -- station names, carriers, the brand.
+  An entry is an exact case-insensitive match, or a full-match regex when written `/.../`. Enforced
+  in code after the model answers, not just asked for in the prompt.
+- Blocking by default, unlike the other AI assertions: a translation gap is a test failure.
+- Sends the screenshot plus the exact on-screen strings, taken from the view hierarchy. Resource ids,
+  bounds and class names are deliberately excluded -- they are English developer identifiers and a
+  language check shown them reports the app's own ids as untranslated.
+- Failures are reported under their own `untranslated` category, so they are distinguishable from
+  `assertNoDefectsWithAI` findings in the AI report.
+- The failure message is one line and names the offending strings
+  (`Not fully in German [de-DE] - 2 untranslated: "Sign in", "Best deals"`), capped at three with
+  `+N more`. A failed flow's message is printed inline as ` (<message>)` on the result line, and CI
+  tooling greps that line; a newline or a parenthesis in the message truncates what such a grep
+  captures, so the full per-string reasoning goes to the debug message and the AI report instead.
+- Needs an OpenAI model (`MAESTRO_CLI_AI_MODEL=gpt-*`); it fails fast on other providers, because
+  structured JSON output is not implemented for them and a lenient parse would report "no
+  violations" for a reply that was never checked.
+- `MAESTRO_CLI_AI_IMAGE_DETAIL` overrides the image detail sent with the call (default `high`).
+
+`setDeviceLocale` puts the device into a language so one flow file can serve every locale:
+
+```yaml
+onFlowComplete:
+  - setDeviceLocale: en-US        # put a shared device back
+---
+- setDeviceLocale: ${DEVICE_LOCALE}
+- clearState
+- launchApp                        # an app reads its language at launch
+- assertLanguageWithAI: ${RUN_LOCALE}
+```
+
+- Android applies it live through the existing driver broadcast. iOS writes the simulator's
+  `AppleLanguages`/`AppleLocale` and does **not** restart it, so the XCTest session survives; the
+  value is read back to confirm the runtime actually accepted the language.
+- Physical iOS devices and web fail with a clear message; neither has a supported mechanism.
+- Validated by ISO shape rather than against `IosLocale`'s curated enum, which covers only 27 of the
+  33 languages the app ships (`bg`, `da`, `hr`, `km`, `ca` and `pt-PT` are absent from it) -- enum
+  gaps would otherwise look like bad input.
+- The change outlives the flow, so restore it in `onFlowComplete` on a shared device.
+
 #### AI-Powered Commands
 
 **`assertVisual` command** - Visual regression testing against baseline images:

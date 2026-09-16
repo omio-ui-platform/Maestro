@@ -12,6 +12,7 @@ import maestro.orchestra.AirplaneValue
 import maestro.orchestra.ApplyConfigurationCommand
 import maestro.orchestra.AssertConditionCommand
 import maestro.orchestra.AssertDarkModeCommand
+import maestro.orchestra.AssertLanguageWithAICommand
 import maestro.orchestra.AssertLightModeCommand
 import maestro.orchestra.AssertScreenshotCommand
 import maestro.orchestra.BackPressCommand
@@ -45,6 +46,7 @@ import maestro.orchestra.ScrollCommand
 import maestro.orchestra.ScrollUntilVisibleCommand
 import maestro.orchestra.SetAirplaneModeCommand
 import maestro.orchestra.SetDarkModeCommand
+import maestro.orchestra.SetDeviceLocaleCommand
 import maestro.orchestra.SetLocationCommand
 import maestro.orchestra.SetOrientationCommand
 import maestro.orchestra.SetPermissionsCommand
@@ -957,6 +959,43 @@ internal class YamlCommandReaderTest {
 
         // Guard the default so a future edit can't silently change it.
         assertThat((commands[1] as SleepCommand).seconds).isEqualTo(4.0)
+    }
+
+    @Test
+    fun assertLanguageWithAI(
+        @YamlFile("036_assertLanguageWithAI.yaml") commands: List<Command>,
+    ) {
+        assertThat(commands).containsExactly(
+            ApplyConfigurationCommand(MaestroConfig(appId = "com.example.app")),
+            // Shorthand string form.
+            AssertLanguageWithAICommand(language = "German"),
+            // Full form with an ignore list.
+            AssertLanguageWithAICommand(language = "Italian", ignore = listOf("Omio", "Berlin Hbf")),
+            // Explicitly non-blocking, with a label.
+            AssertLanguageWithAICommand(language = "French", optional = true, label = "Checkout screen is French"),
+            // Left un-evaluated by the parser: interpolation happens later, in Orchestra, which is
+            // also why the language can only be validated at execution time.
+            AssertLanguageWithAICommand(language = "\${RUN_LOCALE}"),
+        ).inOrder()
+
+        // Unlike the other AI assertions, this one blocks by default; guard that.
+        assertThat((commands[1] as AssertLanguageWithAICommand).optional).isFalse()
+    }
+
+    @Test
+    fun setDeviceLocale(
+        @YamlFile("037_setDeviceLocale.yaml") commands: List<Command>,
+    ) {
+        assertThat(commands).containsExactly(
+            ApplyConfigurationCommand(MaestroConfig(appId = "com.example.app")),
+            SetDeviceLocaleCommand(locale = "de-DE"),
+            // Either separator parses; normalising is the command's job at execution time.
+            SetDeviceLocaleCommand(locale = "pt_BR", label = "Switch to Brazilian Portuguese"),
+            SetDeviceLocaleCommand(locale = "\${DEVICE_LOCALE}", optional = true),
+        ).inOrder()
+
+        // Blocking by default: a flow that could not switch language has nothing left to assert.
+        assertThat((commands[1] as SetDeviceLocaleCommand).optional).isFalse()
     }
 
     private fun commands(vararg commands: Command): List<MaestroCommand> =

@@ -29,6 +29,13 @@ class OpenAIClient {
         readSchema("extractText")
     }
 
+    private val assertLanguageSchema by lazy {
+        readSchema("assertLanguage")
+    }
+
+    /** Overrides the image detail sent with a language assertion; see [assertLanguageWithAi]. */
+    private val IMAGE_DETAIL_ENV_VAR = "MAESTRO_CLI_AI_IMAGE_DETAIL"
+
     private val extractPointWithReasoningSchema by lazy {
         readSchema("extractPointWithReasoning")
     }
@@ -58,6 +65,125 @@ class OpenAIClient {
     )
 
     private val allDefectCategories = defectCategories + listOf("assertion" to "The assertion is not true")
+
+    /**
+     * Finds user-visible strings that are not written in [language].
+     *
+     * The hard part is not detecting a language, it is not crying wolf: a travel app screen is full
+     * of station names, carriers and codes that are identical in every locale. The prompt therefore
+     * spends most of its length on what NOT to report, and [ignore] lets a flow silence anything
+     * still slipping through on a particular screen.
+     *
+     * [onScreenText], when supplied, carries the exact on-screen strings, so the model does not
+     * have to read them off the screenshot and cannot mis-transcribe the text it reports back.
+     */
+    suspend fun assertLanguageWithAi(
+        aiClient: AI,
+        language: String,
+        languageTag: String,
+        screen: ByteArray,
+        ignore: List<String> = emptyList(),
+        onScreenText: String? = null,
+    ): AssertLanguageResponse {
+        val prompt = buildString {
+            appendLine(
+                """
+                You are a localization QA engineer reviewing a mobile app screen that is expected to be
+                fully translated into $language (locale $languageTag).
+
+                Report every user-visible string that is NOT written in $language.
+                """.trimIndent()
+            )
+
+            if (!onScreenText.isNullOrBlank()) {
+                append(
+                    """
+                    |
+                    |ON-SCREEN STRINGS -- authoritative for what the text says. Judge these strings, and
+                    |use the screenshot to see how each one is used and whether a user can read it. Text
+                    |visible in the screenshot but absent here (drawn inside an image, a chart or a map)
+                    |is also in scope.
+                    |
+                    |$onScreenText
+                    """.trimMargin("|")
+                )
+            }
+
+            append(
+                """
+                |
+                |DO NOT REPORT the following. None of these are translation gaps:
+                |* Proper nouns: people, cities, countries, stations, airports, streets, regions.
+                |* Brand, product, company and carrier names, including the app's own name.
+                |* Station, airport, currency and country codes (BER, EUR, DE), and flight or train numbers.
+                |* Numbers, prices, dates, times, durations and their separators.
+                |* Email addresses, URLs, file names and phone numbers.
+                |* User-entered or user-generated content, such as a search box holding what the user typed.
+                |* Words spelled identically in $language and another language, and loanwords that are
+                |  standard usage in $language.
+                |* Regional spelling and wording variants of $language itself. British and American
+                |  English are the same language; so are European and Brazilian Portuguese.
+                |* Text belonging to an embedded third party -- a payment provider's widget, a partner
+                |  logo, an advertisement, a web view served by another service.
+                |* Single letters, punctuation, icons and non-text glyphs.
+                """.trimMargin("|")
+            )
+
+            if (ignore.isNotEmpty()) {
+                append(
+                    """
+                    |
+                    |Additionally, never report these strings; the flow author has declared them expected:
+                    |${ignore.joinToString(separator = "\n") { "* $it" }}
+                    """.trimMargin("|")
+                )
+            }
+
+            append(
+                """
+                |
+                |RULES:
+                |* Report a string only when you are confident a $language translation was genuinely missed.
+                |* When you are unsure whether a string is a proper noun or an untranslated word, DO NOT report it.
+                |* Copy the offending text exactly as it appears. Do not paraphrase or translate it.
+                |* Report each distinct string once, even if it appears several times on screen.
+                |* An empty list is the correct and expected answer for a fully translated screen.
+                |* Provide the response as valid JSON matching the structure below, and nothing else:
+                |
+                |  {
+                |      "violations": [
+                |          {
+                |              "text": <string>,
+                |              "detectedLanguage": <string>,
+                |              "reasoning": <string>
+                |          }
+                |      ]
+                |  }
+                """.trimMargin("|")
+            )
+        }
+
+        val aiResponse = aiClient.chatCompletion(
+            prompt,
+            model = aiClient.defaultModel,
+            maxTokens = 4096,
+            // The on-screen string list already carries the exact text, so the image is only needed
+            // for layout and visibility -- which "low" may well cover at a fraction of the tokens.
+            // Overridable so that can be measured on real screens rather than guessed at.
+            imageDetail = System.getenv(IMAGE_DETAIL_ENV_VAR)?.takeIf { it.isNotBlank() } ?: "high",
+            images = listOf(screen),
+            jsonSchema = json.parseToJsonElement(assertLanguageSchema).jsonObject,
+        )
+
+        return runCatching { json.decodeFromString<AssertLanguageResponse>(aiResponse.response) }
+            .getOrElse { cause ->
+                throw IllegalStateException(
+                    "assertLanguageWithAI: the model did not return the expected JSON. " +
+                        "Response began: ${aiResponse.response.take(200)}",
+                    cause,
+                )
+            }
+    }
 
     suspend fun extractTextWithAi(
         aiClient: AI,

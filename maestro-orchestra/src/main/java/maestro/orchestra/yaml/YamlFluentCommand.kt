@@ -31,6 +31,8 @@ import maestro.orchestra.AssertLightModeCommand
 import maestro.orchestra.AssertNoDefectsWithAICommand
 import maestro.orchestra.AssertVisualCommand
 import maestro.orchestra.AssertScreenshotCommand
+import maestro.orchestra.AssertLanguageWithAICommand
+import maestro.orchestra.SetDeviceLocaleCommand
 import maestro.orchestra.AssertWithAICommand
 import maestro.orchestra.BackPressCommand
 import maestro.orchestra.ClearKeychainCommand
@@ -108,6 +110,8 @@ data class YamlFluentCommand(
     val assertVisual: YamlAssertVisual? = null,
     val assertScreenshot: YamlAssertScreenshot? = null,
     val assertWithAI: YamlAssertWithAI? = null,
+    val assertLanguageWithAI: YamlAssertLanguageWithAI? = null,
+    val setDeviceLocale: YamlSetDeviceLocale? = null,
     val extractTextWithAI: YamlExtractTextWithAI? = null,
     val extractPointWithAI: YamlExtractPointWithAI? = null,
     val extractComponentWithAI: YamlExtractComponentWithAI? = null,
@@ -239,6 +243,27 @@ data class YamlFluentCommand(
                         assertion = assertWithAI.assertion,
                         optional = assertWithAI.optional,
                         label = assertWithAI.label,
+                    )
+                )
+            )
+
+            assertLanguageWithAI != null -> listOf(
+                MaestroCommand(
+                    AssertLanguageWithAICommand(
+                        language = assertLanguageWithAI.language,
+                        ignore = assertLanguageWithAI.ignore,
+                        optional = assertLanguageWithAI.optional,
+                        label = assertLanguageWithAI.label,
+                    )
+                )
+            )
+
+            setDeviceLocale != null -> listOf(
+                MaestroCommand(
+                    SetDeviceLocaleCommand(
+                        locale = setDeviceLocale.locale,
+                        optional = setDeviceLocale.optional,
+                        label = setDeviceLocale.label,
                     )
                 )
             )

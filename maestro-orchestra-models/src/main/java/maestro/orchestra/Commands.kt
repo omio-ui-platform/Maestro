@@ -673,6 +673,122 @@ data class AssertNoDefectsWithAICommand(
     override fun evaluateScripts(jsEngine: JsEngine): Command = this
 }
 
+/**
+ * Asserts that every user-visible string on screen is written in [language].
+ *
+ * Unlike [AssertNoDefectsWithAICommand]'s "localization" category, which looks for *inconsistent*
+ * language mixing, this knows the language it expects — so it still fails a screen that is uniformly
+ * untranslated, which is the usual way a missing translation shows up.
+ *
+ * [ignore] silences strings the flow author knows are intentionally not translated, on top of the
+ * proper-noun and brand-name exclusions the prompt already applies.
+ *
+ * Defaults to blocking, unlike the other AI assertions: a translation gap is a test failure, which
+ * is the whole point of running the suite per language.
+ */
+/**
+ * Puts the device into [locale] -- a language tag such as `de-DE`, `pt-BR` or `zh-Hans`, in either
+ * separator (`de_DE` works too).
+ *
+ * Sets the device only; it does not relaunch the app. An app reads its language at launch, so a flow
+ * that wants the change to show must relaunch afterwards:
+ *
+ * ```yaml
+ * - setDeviceLocale: de-DE
+ * - clearState
+ * - launchApp
+ * ```
+ *
+ * Android applies it live. iOS writes the simulator's preferences without restarting it, so the
+ * session survives; a physical iOS device has no supported mechanism and fails.
+ *
+ * The change outlives the flow on both platforms, so a flow that switches language on a shared
+ * device should put it back in `onFlowComplete`.
+ */
+data class SetDeviceLocaleCommand(
+    val locale: String,
+    override val optional: Boolean = false,
+    override val label: String? = null,
+) : Command {
+    override val originalDescription: String
+        get() = "Set device locale to $locale"
+
+    override fun yamlString(): String {
+        val yamlString = buildString {
+            append(
+                """
+                |setDeviceLocale:
+                |  locale: $locale
+                |  optional: $optional"""
+            )
+            if (label != null) {
+                append(
+                    """
+                    |  label: $label"""
+                )
+            }
+        }
+        return yamlString
+    }
+
+    override fun evaluateScripts(jsEngine: JsEngine): Command {
+        return copy(locale = locale.evaluateScripts(jsEngine))
+    }
+}
+
+data class AssertLanguageWithAICommand(
+    val language: String,
+    val ignore: List<String> = emptyList(),
+    override val optional: Boolean = false,
+    override val label: String? = null,
+) : Command {
+    override val originalDescription: String
+        get() = "Assert screen is in $language"
+
+    override fun yamlString(): String {
+        val yamlString = buildString {
+            append(
+                """
+                |assertLanguageWithAI:
+                |  language: $language"""
+            )
+            if (ignore.isNotEmpty()) {
+                // A block list of quoted items: an inline `[a, b]` breaks on any entry holding a
+                // comma, a colon or the `/regex/` slashes, none of which are unusual here.
+                append(
+                    """
+                    |  ignore:"""
+                )
+                ignore.forEach { entry ->
+                    val escaped = entry.replace("\\", "\\\\").replace("\"", "\\\"")
+                    append(
+                        """
+                        |    - "$escaped""""
+                    )
+                }
+            }
+            append(
+                """
+                |  optional: $optional"""
+            )
+            if (label != null) {
+                append(
+                    """
+                    |  label: $label"""
+                )
+            }
+        }
+        return yamlString
+    }
+
+    override fun evaluateScripts(jsEngine: JsEngine): Command {
+        return copy(
+            language = language.evaluateScripts(jsEngine),
+            ignore = ignore.map { it.evaluateScripts(jsEngine) },
+        )
+    }
+}
+
 data class AssertWithAICommand(
     val assertion: String,
     override val optional: Boolean = true,

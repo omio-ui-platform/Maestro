@@ -63,6 +63,9 @@ import maestro.orchestra.filter.FilterWithDescription
 import maestro.orchestra.filter.TraitFilters
 import maestro.orchestra.geo.Traveller
 import maestro.orchestra.util.ImageCropUtil
+import maestro.orchestra.util.VisibleTextExtractor
+import maestro.orchestra.util.LanguageViolationFilter
+import maestro.orchestra.util.ExpectedLanguage
 import maestro.orchestra.util.ViewHierarchySerializer
 import maestro.orchestra.util.calculateElementRelativePoint
 import maestro.orchestra.util.Env.evaluateScripts
@@ -468,6 +471,8 @@ class Orchestra(
             is AssertConditionCommand -> assertConditionCommand(command)
             is AssertNoDefectsWithAICommand -> assertNoDefectsWithAICommand(command, maestroCommand)
             is AssertWithAICommand -> assertWithAICommand(command, maestroCommand)
+            is AssertLanguageWithAICommand -> assertLanguageWithAICommand(command, maestroCommand)
+            is SetDeviceLocaleCommand -> setDeviceLocaleCommand(command)
             is ExtractTextWithAICommand -> extractTextWithAICommand(command, maestroCommand)
             is ExtractPointWithAICommand -> extractPointWithAICommand(command, maestroCommand)
             is ExtractComponentWithAICommand -> extractComponentWithAICommand(command, maestroCommand)
@@ -628,6 +633,106 @@ class Orchestra(
         }
 
         return false
+    }
+
+    private suspend fun setDeviceLocaleCommand(command: SetDeviceLocaleCommand): Boolean {
+        // Shape is checked here rather than in the driver so the error is identical on every
+        // platform, and checked at execution because `${...}` is only resolved by now.
+        val locale = ExpectedLanguage.parse(command.locale)
+            ?: throw MaestroException.InvalidCommand(
+                "setDeviceLocale: \"${command.locale}\" is not a locale. Use a language tag such as " +
+                    "de-DE, pt-BR or zh-Hans."
+            )
+
+        maestro.setDeviceLocale(locale.tag)
+        return true
+    }
+
+    private suspend fun assertLanguageWithAICommand(
+        command: AssertLanguageWithAICommand,
+        maestroCommand: MaestroCommand
+    ): Boolean {
+        val metadata = getMetadata(maestroCommand)
+
+        // Resolved first, so a typo costs nothing: a screenshot and an AI call are both wasted on a
+        // language nobody can name. `${...}` has already been evaluated by the time this runs, which
+        // is why the check cannot live in the parser.
+        val expected = ExpectedLanguage.parse(command.language)
+            ?: throw MaestroException.InvalidCommand(
+                "assertLanguageWithAI: \"${command.language}\" does not name a language. Use an " +
+                    "ISO 639-1 code (de, pt-BR, en-GB) or an English language name (German)."
+            )
+
+        val imageData = Buffer()
+        maestro.takeScreenshot(imageData, compressed = false)
+
+        // One snapshot, used for both the model input and the failure's attached hierarchy. Two
+        // snapshots would cost a second round trip (~1s) and could disagree if the screen moved
+        // between them, leaving the reported strings describing a different screen than the dump.
+        val hierarchy = try {
+            maestro.viewHierarchy()
+        } catch (e: Exception) {
+            logger.warn("Could not read the view hierarchy for the language assertion: ${e.message}")
+            null
+        }
+        val onScreenText = hierarchy?.let { VisibleTextExtractor.extract(it).render() }
+
+        val violations = AIPredictionEngine.assertLanguage(
+            screen = imageData.copy().readByteArray(),
+            aiClient = ai,
+            language = expected.displayName,
+            languageTag = expected.tag,
+            ignore = command.ignore.filter { it.isNotBlank() },
+            onScreenText = onScreenText,
+        )
+
+        val filtered = LanguageViolationFilter.apply(violations, command.ignore) { it.text }
+        if (filtered.kept.isEmpty()) return false
+
+        val defects = filtered.kept.map {
+            Defect(
+                // Not "localization": that category belongs to assertNoDefectsWithAI, and the two
+                // are rendered by the same badge in the AI report.
+                category = "untranslated",
+                reasoning = "\"${it.text}\" looks ${it.detectedLanguage}, expected ${expected.displayName}: ${it.reasoning}",
+            )
+        }
+        dispatch("onAIArtifactGenerated") { it.onAIArtifactGenerated(imageData.copy(), defects.size) }
+        onCommandGeneratedOutput(command, defects, imageData)
+
+        // The thrown message is ONE line and names the strings, because that line is all a CI
+        // report shows: a failed flow prints it inline as ` (<message>)` and the pipeline greps
+        // that line for the Slack row. Listing the strings here is what makes the row triageable
+        // without opening an artifact; the per-string reasoning goes to `debugMessage` and to the
+        // `untranslated` defects above, both of which reach the AI report intact.
+        val quoted = filtered.kept.map { "\"${it.text}\"" }
+        val shown = quoted.take(MAX_UNTRANSLATED_LISTED)
+        val summary = buildString {
+            append("Not fully in ${expected.describeBriefly()} - ${filtered.kept.size} untranslated: ")
+            append(shown.joinToString(", "))
+            if (quoted.size > shown.size) append(" +${quoted.size - shown.size} more")
+            if (filtered.suppressed > 0) append(" [${filtered.suppressed} suppressed by ignore]")
+        }
+
+        val word = if (filtered.kept.size == 1) "string" else "strings"
+        val detail = buildString {
+            append("Screen is not fully in ${expected.describe()}: ${filtered.kept.size} untranslated $word")
+            filtered.kept.forEach { append("\n- \"${it.text}\" (${it.detectedLanguage}): ${it.reasoning}") }
+            if (filtered.suppressed > 0) {
+                val matches = if (filtered.suppressed == 1) "match" else "matches"
+                append("\n(${filtered.suppressed} further $matches suppressed by `ignore`)")
+            }
+        }
+
+        updateMetadata(maestroCommand, metadata.copy(aiReasoning = detail))
+
+        throw MaestroException.AssertionFailure(
+            message = summary,
+            hierarchyRoot = hierarchy?.root ?: TreeNode(),
+            debugMessage = detail + "\n\nEither these strings are genuinely untranslated, or they are " +
+                "proper nouns the check misjudged and belong in the command's `ignore` list. The " +
+                "screenshot is in the debug artifacts.",
+        )
     }
 
     private suspend fun assertWithAICommand(command: AssertWithAICommand, maestroCommand: MaestroCommand): Boolean {
@@ -2150,6 +2255,13 @@ class Orchestra(
 
         private const val MAX_ERASE_CHARACTERS = 50
         private const val MAX_RETRIES_ALLOWED = 3
+
+        /**
+         * How many untranslated strings the one-line assertLanguageWithAI failure names before it
+         * falls back to a count. The whole message has to stay short enough to read on a CI report
+         * row; the full list is in the debug message and the AI report either way.
+         */
+        private const val MAX_UNTRANSLATED_LISTED = 3
         private val logger = LoggerFactory.getLogger(Orchestra::class.java)
     }
 

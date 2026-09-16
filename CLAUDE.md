@@ -6,6 +6,29 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Maestro is a UI testing framework for Mobile (Android/iOS) and Web applications. Tests are written in YAML files and executed against real or emulated devices. The framework is built in Kotlin/Java using Gradle.
 
+### Companion component: the pipeline orchestrator
+
+This fork is only half the system. The orchestrator that boots devices, spawns `maestro test`, retries,
+parses output and uploads reports/recordings lives in the app monorepo:
+
+```
+app/tools/maestro-pipelines
+```
+
+It owns everything outside the CLI: device lifecycle (`platform-utils/{ios,android}.ts` boot emulators and
+simulators and pin their locale from `--lang` **before** the driver attaches), the `maestro test` argv and
+`-e` env (`utils.ts` `maestroRunTests`), sharding/retries (`run-tests-rc.ts`, `scope-platform-ctx.ts`),
+result parsing keyed by flow filename (`utils.ts` `convertOutputToTestExecutionMap`), and Slack/GCS
+reporting (`reporting/*`). Jenkins jobs are under `tools/maestro-pipelines/tools/ci/*.groovy`.
+
+The Maestro flows it runs are in the same monorepo at `packages/<package>/maestro/tests/{app,web}/`, with
+shared flows/scripts at `packages/<package>/maestro/shared/` (referenced from flows as
+`app/<package>/flows/...`, resolved by this fork's `SharedFlowResolver`). Team docs:
+`docs/MaestroRegressionTesting.md`.
+
+When changing CLI flags, console output that the pipeline greps (`[RECORDING]`, `[Passed]`/`[Failed]`,
+`Flow '<name>' execution ended in`), or report formats, check that side too.
+
 ## Build and Development Commands
 
 ### Building the Project

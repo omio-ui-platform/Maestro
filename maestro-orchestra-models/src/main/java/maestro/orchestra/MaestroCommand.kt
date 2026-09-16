@@ -41,6 +41,8 @@ data class MaestroCommand(
     val assertScreenshotCommand: AssertScreenshotCommand? = null,
     val assertNoDefectsWithAICommand: AssertNoDefectsWithAICommand? = null,
     val assertWithAICommand: AssertWithAICommand? = null,
+    val assertLanguageWithAICommand: AssertLanguageWithAICommand? = null,
+    val setDeviceLocaleCommand: SetDeviceLocaleCommand? = null,
     val extractTextWithAICommand: ExtractTextWithAICommand? = null,
     val extractPointWithAICommand: ExtractPointWithAICommand? = null,
     val extractComponentWithAICommand: ExtractComponentWithAICommand? = null,
@@ -97,6 +99,8 @@ data class MaestroCommand(
         assertConditionCommand = command as? AssertConditionCommand,
         assertNoDefectsWithAICommand = command as? AssertNoDefectsWithAICommand,
         assertWithAICommand = command as? AssertWithAICommand,
+        assertLanguageWithAICommand = command as? AssertLanguageWithAICommand,
+        setDeviceLocaleCommand = command as? SetDeviceLocaleCommand,
         extractTextWithAICommand = command as? ExtractTextWithAICommand,
         extractPointWithAICommand = command as? ExtractPointWithAICommand,
         extractComponentWithAICommand = command as? ExtractComponentWithAICommand,
@@ -153,6 +157,8 @@ data class MaestroCommand(
         assertConditionCommand != null -> assertConditionCommand
         assertNoDefectsWithAICommand != null -> assertNoDefectsWithAICommand
         assertWithAICommand != null -> assertWithAICommand
+        assertLanguageWithAICommand != null -> assertLanguageWithAICommand
+        setDeviceLocaleCommand != null -> setDeviceLocaleCommand
         extractTextWithAICommand != null -> extractTextWithAICommand
         extractPointWithAICommand != null -> extractPointWithAICommand
         extractComponentWithAICommand != null -> extractComponentWithAICommand
