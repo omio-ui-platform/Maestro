@@ -802,6 +802,7 @@ data class AssertLanguageWithAICommand(
         return copy(
             language = language.evaluateScripts(jsEngine),
             ignore = ignore.map { it.evaluateScripts(jsEngine) },
+            label = label?.evaluateScripts(jsEngine),
         )
     }
 }
