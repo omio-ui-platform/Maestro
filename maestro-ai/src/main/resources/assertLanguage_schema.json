@@ -1,17 +1,24 @@
 {
   "name": "assertLanguage",
-  "description": "Returns the user-visible strings on screen that are not written in the expected language",
+  "description": "Examines the user-visible strings on screen and reports, for each candidate, whether it is genuinely written in the wrong language. Include a string you considered and judged acceptable with isViolation false rather than omitting it.",
   "strict": true,
   "schema": {
     "type": "object",
-    "required": ["violations"],
+    "required": [
+      "violations"
+    ],
     "additionalProperties": false,
     "properties": {
       "violations": {
         "type": "array",
         "items": {
           "type": "object",
-          "required": ["text", "detectedLanguage", "reasoning"],
+          "required": [
+            "text",
+            "detectedLanguage",
+            "isViolation",
+            "reasoning"
+          ],
           "additionalProperties": false,
           "properties": {
             "text": {
@@ -22,9 +29,13 @@
               "type": "string",
               "description": "The language the string appears to be written in"
             },
+            "isViolation": {
+              "type": "boolean",
+              "description": "True only if this string is genuinely a translation gap. False for anything you judge acceptable -- a proper noun or brand, a word spelled identically in the expected language, or text that is not ours to translate. Set it honestly: entries with false are discarded, so there is no need to omit them."
+            },
             "reasoning": {
               "type": "string",
-              "description": "Why this string is a translation gap rather than an allowed exception"
+              "description": "Why this string is, or is not, a translation gap -- state the verdict's justification either way."
             }
           }
         }

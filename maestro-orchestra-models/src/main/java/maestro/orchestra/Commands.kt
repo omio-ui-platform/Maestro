@@ -739,6 +739,17 @@ data class SetDeviceLocaleCommand(
 data class AssertLanguageWithAICommand(
     val language: String,
     val ignore: List<String> = emptyList(),
+    /**
+     * Name of a variable to receive this screen's offending strings, comma-separated, or an empty
+     * string when the screen is clean.
+     *
+     * Exists so a multi-screen flow can keep going and report everything at the end instead of
+     * stopping at the first gap. Pair it with `optional: true`: the command still records its
+     * findings to the AI report (that happens before the failure), the flow reads them from this
+     * variable and accumulates, and a single check at the end fails the flow once. Without it, a
+     * 12-screen walk needs 12 runs to find 12 gaps.
+     */
+    val outputVariable: String? = null,
     override val optional: Boolean = false,
     override val label: String? = null,
 ) : Command {
@@ -766,6 +777,12 @@ data class AssertLanguageWithAICommand(
                         |    - "$escaped""""
                     )
                 }
+            }
+            if (outputVariable != null) {
+                append(
+                    """
+                    |  outputVariable: $outputVariable"""
+                )
             }
             append(
                 """

@@ -201,6 +201,15 @@ data class FlowAIOutput(
 )
 
 data class SingleScreenFlowAIOutput(
+    /**
+     * Which screen these defects were found on: the producing command's `description()`, i.e. its
+     * `label` when it has one.
+     *
+     * Without it every entry is an anonymous `(screenshot, defects)` pair and a multi-screen flow's
+     * report cannot be grouped or diffed -- the localization suite walks ~12 screens in one flow and
+     * needs to say which of them is untranslated, not just that the flow found something.
+     */
+    val screen: String,
     @JsonProperty("screenshot_path") val screenshotPath: File,
     val defects: List<Defect>,
 )

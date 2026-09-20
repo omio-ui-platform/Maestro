@@ -189,6 +189,28 @@ catches that.
   structured JSON output is not implemented for them and a lenient parse would report "no
   violations" for a reply that was never checked.
 - `MAESTRO_CLI_AI_IMAGE_DETAIL` overrides the image detail sent with the call (default `high`).
+- `outputVariable` receives the screen's offending strings, comma-separated, so a multi-screen walk
+  can keep going and fail once at the end with everything it found. Paired with `optional: true`:
+  the findings still reach the AI report, which happens before the failure. Without it, finding N
+  untranslated screens takes N runs.
+- The model returns a per-string `isViolation` verdict and entries marked false are discarded.
+  Models populate a `violations` array as "strings I examined", not "strings that are wrong" -- real
+  runs reported `Paris` reasoning *"the German equivalent is spelled the same, so this is not a
+  violation"*, and `Booking.com` reasoning *"this is a brand name"*. The judgement was right both
+  times; only the output contract was wrong, and asking more firmly in the prompt does not fix that.
+- The visible-text extractor scrubs developer identifiers **per token**, not per string. iOS
+  aggregates a subtree's accessibility labels into one label on the container, so ids arrive as
+  words inside a sentence and whole-string matching missed them.
+
+Reporting, for CI tooling that has to group findings by screen:
+
+- `SingleScreenFlowAIOutput` carries a `screen` field -- the producing command's `description()`,
+  i.e. its `label`. Without it every entry in `ai-(<flow>).json` is an anonymous
+  `(screenshot, defects)` pair, so a flow that walks 12 screens cannot say which of them is
+  untranslated. The HTML AI report names it on each screen card too.
+- `Defect` carries `offendingText`: the exact string, verbatim. `reasoning` is prose written for a
+  human and its wording is ours to change, so nothing machine-readable should be recovered by
+  parsing it.
 
 `setDeviceLocale` puts the device into a language so one flow file can serve every locale:
 

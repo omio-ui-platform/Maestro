@@ -27,6 +27,40 @@ object VisibleTextExtractor {
     private val NON_LINGUISTIC = Regex("^[\\p{N}\\p{P}\\p{S}\\s]+$")
     private val WHITESPACE = Regex("\\s+")
 
+    /**
+     * A testID that has surfaced as readable text rather than as an id.
+     *
+     * Excluding `rid=` from this output is not enough on its own. React Native maps a component's
+     * `testID` onto the iOS accessibility label, so a developer identifier arrives in
+     * `accessibilityText` -- the very attribute a user-facing label also arrives in. It is the same
+     * mechanism a flow relies on when it taps `passwordless-signin-button` as TEXT, so it cannot be
+     * turned off; it has to be filtered here.
+     *
+     * Seen in a real run: a my-bookings segmented control sets `testID={tab.name}`, and the model
+     * dutifully reported `tab-upcoming` and `tab-archived` as untranslated English. Every tab bar
+     * and segmented control in the app would do the same, in all 33 locales.
+     *
+     * Applied PER TOKEN, not to the whole string, because that is how these actually arrive. iOS
+     * rolls a subtree's accessibility labels into one aggregated label on the container, so a real
+     * my-bookings screen yielded:
+     *
+     *     "Meine Buchungen Meine Buchungen tab-upcoming tab-archived Vertikaler Rollbalken, ..."
+     *
+     * -- two testIDs embedded in a paragraph of otherwise correct German. Testing the whole string
+     * leaves them in; testing each word removes them and keeps the sentence.
+     *
+     * Matches a lowercase run joined by `-`, `_` or `.`: `tab-upcoming`, `btn_accept_all`,
+     * `ic_tabbar_profile`. Requiring all-lower-case is what protects display copy, which is
+     * capitalised -- German compounds like "Live-Updates" are kept. The residual risk is a genuinely
+     * lowercase hyphenated word in UI copy, which is rare enough to accept and would at worst hide
+     * one word from the check rather than invent a finding.
+     *
+     * Cross-referencing the tree's `resource-id`s instead would be more precise in principle but
+     * does not work here: those tabs carry ids `upcoming`/`archived` while their labels read
+     * `tab-upcoming`/`tab-archived`, so the id never matches the leaked text.
+     */
+    private val LOOKS_LIKE_IDENTIFIER = Regex("^[a-z0-9]+([._-][a-z0-9]+)+$")
+
     data class Result(
         val strings: List<String>,
         val omitted: Int,
@@ -67,8 +101,13 @@ object VisibleTextExtractor {
 
     private fun clean(raw: String?): String? {
         val collapsed = raw?.replace(WHITESPACE, " ")?.trim() ?: return null
-        if (collapsed.isEmpty() || NON_LINGUISTIC.matches(collapsed)) return null
-        return collapsed
+        val scrubbed = collapsed
+            .split(' ')
+            .filterNot { LOOKS_LIKE_IDENTIFIER.matches(it) }
+            .joinToString(" ")
+            .trim()
+        if (scrubbed.isEmpty() || NON_LINGUISTIC.matches(scrubbed)) return null
+        return scrubbed
     }
 
     /**

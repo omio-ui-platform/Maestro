@@ -5439,8 +5439,16 @@ class IntegrationTest {
         onCommandWarned = onCommandWarned,
     )
 
-    private fun violation(text: String, language: String = "English") =
-        LanguageViolation(text = text, detectedLanguage = language, reasoning = "\"$text\" is $language")
+    private fun violation(
+        text: String,
+        language: String = "English",
+        isViolation: Boolean = true,
+    ) = LanguageViolation(
+        text = text,
+        detectedLanguage = language,
+        reasoning = "\"$text\" is $language",
+        isViolation = isViolation,
+    )
 
     @Test
     fun `Case 155 - assertLanguageWithAI passes when the model reports no violations`() {
@@ -5493,6 +5501,50 @@ class IntegrationTest {
         // Its own category, so the AI report does not label it as an assertNoDefectsWithAI finding.
         assertThat(generatedOutput).hasSize(1)
         assertThat(generatedOutput.first().map { it.category }).containsExactly("untranslated", "untranslated")
+    }
+
+    @Test
+    fun `Case 155 - assertLanguageWithAI discards findings the model marked not-a-violation`() {
+        val commands = readCommands("155_assert_language")
+        val driver = driver { element { text = "Sign in"; bounds = Bounds(0, 0, 100, 50) } }
+        // What a real run actually returned: the model reports every string it examined, and
+        // explains in `reasoning` that some of them are fine. "Paris" is spelled the same in
+        // German; "Booking.com" is a brand. Only "Sign in" is a genuine gap.
+        val engine = FakeAIPredictionEngine(
+            listOf(
+                violation("Paris", isViolation = false),
+                violation("Booking.com", isViolation = false),
+                violation("Sign in"),
+            ),
+        )
+
+        val error = assertThrows<MaestroException.AssertionFailure> {
+            Maestro(driver).use {
+                runBlocking { languageOrchestra(it, engine).runFlow(commands) }
+            }
+        }
+
+        assertThat(error.message).contains("1 untranslated")
+        assertThat(error.message).contains("\"Sign in\"")
+        assertThat(error.message).doesNotContain("Paris")
+        assertThat(error.message).doesNotContain("Booking.com")
+        // Discarded by the model's own verdict, so not counted as `ignore`-suppressed either.
+        assertThat(error.message).doesNotContain("suppressed")
+    }
+
+    @Test
+    fun `Case 155 - assertLanguageWithAI passes when every finding is marked not-a-violation`() {
+        val commands = readCommands("155_assert_language")
+        val driver = driver { element { text = "Paris"; bounds = Bounds(0, 0, 100, 50) } }
+        val engine = FakeAIPredictionEngine(
+            listOf(violation("Paris", isViolation = false), violation("Amsterdam", isViolation = false)),
+        )
+
+        Maestro(driver).use {
+            runBlocking { languageOrchestra(it, engine).runFlow(commands) }
+        }
+
+        assertThat(engine.assertLanguageCalls).hasSize(1)
     }
 
     @Test

@@ -142,7 +142,7 @@ class HtmlAITestSuiteReporter {
                                         // Defect count for the screen
                                         p(classes = "text-lg") {
                                             val word = if (screenSummary.defects.size == 1) "defect" else "defects"
-                                            +"${screenSummary.defects.size} possible $word"
+                                            +"${screenSummary.screen}: ${screenSummary.defects.size} possible $word"
                                         }
 
                                         screenSummary.defects.forEachIndexed { i, defect ->

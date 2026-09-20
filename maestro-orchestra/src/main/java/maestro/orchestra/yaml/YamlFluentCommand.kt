@@ -252,6 +252,7 @@ data class YamlFluentCommand(
                     AssertLanguageWithAICommand(
                         language = assertLanguageWithAI.language,
                         ignore = assertLanguageWithAI.ignore,
+                        outputVariable = assertLanguageWithAI.outputVariable,
                         optional = assertLanguageWithAI.optional,
                         label = assertLanguageWithAI.label,
                     )

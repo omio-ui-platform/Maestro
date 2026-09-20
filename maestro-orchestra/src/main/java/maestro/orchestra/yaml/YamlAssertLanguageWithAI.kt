@@ -5,6 +5,8 @@ import com.fasterxml.jackson.annotation.JsonCreator
 data class YamlAssertLanguageWithAI(
     val language: String,
     val ignore: List<String> = emptyList(),
+    /** Variable to receive this screen's offending strings; see AssertLanguageWithAICommand. */
+    val outputVariable: String? = null,
     val optional: Boolean = false,
     val label: String? = null,
 ) {

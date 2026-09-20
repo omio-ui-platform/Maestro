@@ -181,6 +181,7 @@ object MaestroCommandRunner {
                 val screenshotPath = ScreenshotUtils.writeAIscreenshot(screenshot)
                 aiOutput.screenOutputs.add(
                     SingleScreenFlowAIOutput(
+                        screen = command.description(),
                         screenshotPath = screenshotPath,
                         defects = defects,
                     )

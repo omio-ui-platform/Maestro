@@ -91,7 +91,11 @@ class OpenAIClient {
                 You are a localization QA engineer reviewing a mobile app screen that is expected to be
                 fully translated into $language (locale $languageTag).
 
-                Report every user-visible string that is NOT written in $language.
+                Report every user-visible string you suspect is NOT written in $language, and set
+                `isViolation` on each: true if it is genuinely a translation gap, false if you
+                examined it and judged it acceptable. Entries marked false are discarded, so state
+                your verdict there -- do not report a string as a violation while explaining in
+                `reasoning` that it is not one.
                 """.trimIndent()
             )
 
@@ -114,6 +118,9 @@ class OpenAIClient {
                 |
                 |DO NOT REPORT the following. None of these are translation gaps:
                 |* Proper nouns: people, cities, countries, stations, airports, streets, regions.
+                |  This includes a place name left in its English form where $language has its own
+                |  ("Vienna" on a German screen rather than "Wien"). Deliberate: these come from
+                |  travel data rather than the app's string catalogue, and are out of scope for now.
                 |* Brand, product, company and carrier names, including the app's own name.
                 |* Station, airport, currency and country codes (BER, EUR, DE), and flight or train numbers.
                 |* Numbers, prices, dates, times, durations and their separators.

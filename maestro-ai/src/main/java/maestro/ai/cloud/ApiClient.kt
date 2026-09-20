@@ -19,6 +19,17 @@ private val logger = LoggerFactory.getLogger(OpenAI::class.java)
 data class Defect(
     val category: String,
     val reasoning: String,
+    /**
+     * The exact user-visible string this defect is about, when the check has one.
+     *
+     * `reasoning` is prose written for a human and its wording is ours to change; anything
+     * machine-readable must not be recovered by parsing it. The localization report groups
+     * untranslated strings per screen, so it needs the string itself, verbatim.
+     *
+     * Null for checks that describe a screen rather than a string (`assertNoDefectsWithAI`,
+     * `assertWithAI`), and for defects decoded from the cloud API, which does not send it.
+     */
+    val offendingText: String? = null,
 )
 
 @Serializable
@@ -37,6 +48,17 @@ data class LanguageViolation(
     val text: String,
     val detectedLanguage: String,
     val reasoning: String,
+    /**
+     * The model's own verdict, read rather than inferred.
+     *
+     * Models populate `violations` as "strings I examined", not "strings that are wrong": a real
+     * run reported "Paris" with the reasoning *"the German equivalent 'Paris' is spelled the same,
+     * so this is not a violation"*, and "Booking.com" with *"this is a brand name and should not be
+     * translated"*. The judgement was right both times; only the output contract was wrong. Asking
+     * more firmly in the prompt does not fix that -- the prompt already told it not to report
+     * brands. Making the verdict a required field and filtering on it does.
+     */
+    val isViolation: Boolean,
 )
 
 @Serializable

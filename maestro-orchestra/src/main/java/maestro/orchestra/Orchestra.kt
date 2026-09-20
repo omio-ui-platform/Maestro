@@ -686,7 +686,21 @@ class Orchestra(
             onScreenText = onScreenText,
         )
 
-        val filtered = LanguageViolationFilter.apply(violations, command.ignore) { it.text }
+        // Drop the entries the model itself judged acceptable, BEFORE the `ignore` filter. The
+        // response is a list of strings it examined, not of strings that are wrong -- see
+        // LanguageViolation.isViolation. Discarding them here rather than trusting the model to
+        // omit them is what keeps a brand name or an identically-spelled word out of the report.
+        val asserted = violations.filter { it.isViolation }
+
+        val filtered = LanguageViolationFilter.apply(asserted, command.ignore) { it.text }
+
+        // Set on BOTH paths, so a flow reading this variable can tell "screen was clean" (empty)
+        // from "the command never ran" (undefined) -- a walk that accumulates per screen needs
+        // that distinction to report honestly.
+        command.outputVariable?.let { name ->
+            jsEngine.putEnv(name, filtered.kept.joinToString(", ") { it.text })
+        }
+
         if (filtered.kept.isEmpty()) return false
 
         val defects = filtered.kept.map {
@@ -695,6 +709,7 @@ class Orchestra(
                 // are rendered by the same badge in the AI report.
                 category = "untranslated",
                 reasoning = "\"${it.text}\" looks ${it.detectedLanguage}, expected ${expected.displayName}: ${it.reasoning}",
+                offendingText = it.text,
             )
         }
         dispatch("onAIArtifactGenerated") { it.onAIArtifactGenerated(imageData.copy(), defects.size) }
