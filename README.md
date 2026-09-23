@@ -144,8 +144,9 @@ Screen recording during test execution with automatic upload to Google Cloud Sto
 - `RECORD_ON_FINDINGS=true` opts a job out of both of those rules, because they assume a run worth
   watching is a run that failed. That is false for the localization suite, whose flows report
   untranslated strings *without* failing, so its interesting runs all pass. With it set: record
-  every attempt, and keep the file when the flow either produced AI findings or failed on its last
-  attempt; discard otherwise. `hasFindings` is derived from the flow's own `FlowAIOutput`, not
+  every attempt, and keep the file when the flow either PASSED with AI findings or FAILED on its last
+  attempt; discard otherwise. A failed attempt with findings that will be retried is discarded like
+  any other non-final failure, since the retry records its own video. `hasFindings` is derived from the flow's own `FlowAIOutput`, not
   configured. Unset -- every other job -- both conditions are exactly as above, so this cannot
   change another suite's behaviour.
 - Uses `gcloud` CLI for upload (simpler auth than Java SDK)

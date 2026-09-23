@@ -316,9 +316,16 @@ class TestSuiteInteractor(
                 // Without the gate, any flow that passes while holding AI defects would start
                 // uploading -- `assertNoDefectsWithAI` writes into this same `aiOutput`, and other
                 // suites use it.
+                //
+                // `hasFindings` only keeps a PASSING flow's video. A failed attempt with findings
+                // still waits for its last attempt like any failure: the retry records its own video.
+                // (Build 90 shipped `hasFindings || (ERROR && isLastAttempt)`, which also uploaded
+                // every failed non-final attempt that had findings -- not what the table above says.)
                 val hasFindings = recordOnFindings && aiOutput.screenOutputs.any { it.defects.isNotEmpty() }
-                val shouldUpload = (hasFindings || (flowStatus == FlowStatus.ERROR && isLastAttempt))
-                    && gcsBucket != null && recordingFile != null
+                val shouldUpload = (
+                    (flowStatus == FlowStatus.SUCCESS && hasFindings) ||
+                        (flowStatus == FlowStatus.ERROR && isLastAttempt)
+                    ) && gcsBucket != null && recordingFile != null
 
                 // DEBUG LOGS: Upload decision
                 logger.info("${shardPrefix}[RECORDING-DEBUG] Post-execution state:")
@@ -327,7 +334,7 @@ class TestSuiteInteractor(
                 logger.info("${shardPrefix}[RECORDING-DEBUG] recordingFile.exists=${recordingFile?.exists()}")
                 logger.info("${shardPrefix}[RECORDING-DEBUG] gcsBucket=${gcsBucket ?: "NOT SET"}")
                 logger.info("${shardPrefix}[RECORDING-DEBUG] hasFindings=$hasFindings, isLastAttempt=$isLastAttempt")
-                logger.info("${shardPrefix}[RECORDING-DEBUG] shouldUpload=$shouldUpload (hasFindings || (ERROR && isLastAttempt)) && gcsBucket!=null && recordingFile!=null)")
+                logger.info("${shardPrefix}[RECORDING-DEBUG] shouldUpload=$shouldUpload ((SUCCESS && hasFindings) || (ERROR && isLastAttempt)) && gcsBucket!=null && recordingFile!=null)")
 
                 if (shouldUpload && recordingFile != null) {
                     val gcsUrl = GcsUploader.uploadRecording(
