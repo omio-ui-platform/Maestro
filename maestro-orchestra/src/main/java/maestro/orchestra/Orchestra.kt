@@ -715,11 +715,21 @@ class Orchestra(
         dispatch("onAIArtifactGenerated") { it.onAIArtifactGenerated(imageData.copy(), defects.size) }
         onCommandGeneratedOutput(command, defects, imageData)
 
-        // The thrown message is ONE line and names the strings, because that line is all a CI
-        // report shows: a failed flow prints it inline as ` (<message>)` and the pipeline greps
-        // that line for the Slack row. Listing the strings here is what makes the row triageable
-        // without opening an artifact; the per-string reasoning goes to `debugMessage` and to the
-        // `untranslated` defects above, both of which reach the AI report intact.
+        // FINDINGS DO NOT FAIL THIS COMMAND. It used to throw an AssertionFailure here, which made
+        // a translation gap indistinguishable from a broken flow: the suite could not tell "this
+        // locale has untranslated strings" from "this locale never finished", CI was red on runs
+        // that worked perfectly, and the pipeline retried a whole locale -- its AI calls and, with
+        // booking on, another real booking -- to re-discover a string that cannot change between
+        // attempts.
+        //
+        // What a caller gets instead: the `untranslated` defects and the screenshot via
+        // `onCommandGeneratedOutput` above (so the AI report is unchanged), the offending strings in
+        // the command's `outputVariable`, and the full reasoning on the command's metadata below.
+        //
+        // The command still FAILS when the check itself cannot run -- a missing or rejected API
+        // key, a timeout, an unparseable response -- because those throw before this point. That is
+        // the distinction the flow now keys off, so `assert-screen-language.yaml` must NOT mark this
+        // command `optional`, or a failed check would be silently reported as a clean screen.
         val quoted = filtered.kept.map { "\"${it.text}\"" }
         val shown = quoted.take(MAX_UNTRANSLATED_LISTED)
         val summary = buildString {
@@ -739,15 +749,16 @@ class Orchestra(
             }
         }
 
-        updateMetadata(maestroCommand, metadata.copy(aiReasoning = detail))
+        updateMetadata(maestroCommand, metadata.copy(aiReasoning = detail + "\n\nEither these strings " +
+            "are genuinely untranslated, or they are proper nouns the check misjudged and belong in " +
+            "the command's `ignore` list. The screenshot is in the debug artifacts."))
 
-        throw MaestroException.AssertionFailure(
-            message = summary,
-            hierarchyRoot = hierarchy?.root ?: TreeNode(),
-            debugMessage = detail + "\n\nEither these strings are genuinely untranslated, or they are " +
-                "proper nouns the check misjudged and belong in the command's `ignore` list. The " +
-                "screenshot is in the debug artifacts.",
-        )
+        // One line, named strings, at INFO: this is the only place the run's own console says what
+        // was found, now that nothing throws. The authoritative record is the AI report.
+        logger.info(summary)
+
+        // False, like the clean path: nothing here touched the device.
+        return false
     }
 
     private suspend fun assertWithAICommand(command: AssertWithAICommand, maestroCommand: MaestroCommand): Boolean {

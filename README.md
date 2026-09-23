@@ -141,6 +141,13 @@ Screen recording during test execution with automatic upload to Google Cloud Sto
 
 - Records only on the **last retry attempt** (no point recording tests that will be retried)
 - Uploads only **failed test** recordings (passed tests don't need recordings)
+- `RECORD_ON_FINDINGS=true` opts a job out of both of those rules, because they assume a run worth
+  watching is a run that failed. That is false for the localization suite, whose flows report
+  untranslated strings *without* failing, so its interesting runs all pass. With it set: record
+  every attempt, and keep the file when the flow either produced AI findings or failed on its last
+  attempt; discard otherwise. `hasFindings` is derived from the flow's own `FlowAIOutput`, not
+  configured. Unset -- every other job -- both conditions are exactly as above, so this cannot
+  change another suite's behaviour.
 - Uses `gcloud` CLI for upload (simpler auth than Java SDK)
 - File naming convention: `{buildName}-{buildNumber}-{deviceName}-{flowName}.mp4`
 - Requires `BUILD_NAME`, `BUILD_NUMBER`, `DEVICE_NAME` env vars to be set (prevents accidental local recording)
@@ -174,25 +181,31 @@ catches that.
 - `ignore` silences strings that are untranslated by design -- station names, carriers, the brand.
   An entry is an exact case-insensitive match, or a full-match regex when written `/.../`. Enforced
   in code after the model answers, not just asked for in the prompt.
-- Blocking by default, unlike the other AI assertions: a translation gap is a test failure.
+- **Non-blocking on findings, blocking when the check cannot run.** Untranslated strings are
+  reported -- AI artifact, screenshot, `outputVariable`, command metadata -- and the command
+  COMPLETES. A missing or rejected API key, a timeout or an unparseable reply still fails it.
+  That split is deliberate: a caller can then tell "this screen has gaps" from "this screen was
+  never checked", and the second must never be reported as clean. It also means a findings-only
+  result no longer triggers a pipeline retry, which used to repeat a whole flow to re-discover a
+  string that cannot change between attempts.
 - Sends the screenshot plus the exact on-screen strings, taken from the view hierarchy. Resource ids,
   bounds and class names are deliberately excluded -- they are English developer identifiers and a
   language check shown them reports the app's own ids as untranslated.
-- Failures are reported under their own `untranslated` category, so they are distinguishable from
+- Findings are reported under their own `untranslated` category, so they are distinguishable from
   `assertNoDefectsWithAI` findings in the AI report.
-- The failure message is one line and names the offending strings
+- The summary is one line and names the offending strings
   (`Not fully in German [de-DE] - 2 untranslated: "Sign in", "Best deals"`), capped at three with
-  `+N more`. A failed flow's message is printed inline as ` (<message>)` on the result line, and CI
-  tooling greps that line; a newline or a parenthesis in the message truncates what such a grep
-  captures, so the full per-string reasoning goes to the debug message and the AI report instead.
+  `+N more`, logged at INFO. It stays one paren-free line because it used to be a failure message
+  printed inline as ` (<message>)` on the result line, which CI tooling greps -- a newline or a
+  parenthesis truncates such a grep. The full per-string reasoning goes to the command metadata and
+  the AI report.
 - Needs an OpenAI model (`MAESTRO_CLI_AI_MODEL=gpt-*`); it fails fast on other providers, because
   structured JSON output is not implemented for them and a lenient parse would report "no
   violations" for a reply that was never checked.
 - `MAESTRO_CLI_AI_IMAGE_DETAIL` overrides the image detail sent with the call (default `high`).
 - `outputVariable` receives the screen's offending strings, comma-separated, so a multi-screen walk
-  can keep going and fail once at the end with everything it found. Paired with `optional: true`:
-  the findings still reach the AI report, which happens before the failure. Without it, finding N
-  untranslated screens takes N runs.
+  can accumulate everything it found. It is set on a clean screen too (to the empty string), which
+  is what lets a caller tell a checked-and-clean screen from one where the check never ran.
 - The model returns a per-string `isViolation` verdict and entries marked false are discarded.
   Models populate a `violations` array as "strings I examined", not "strings that are wrong" -- real
   runs reported `Paris` reasoning *"the German equivalent is spelled the same, so this is not a

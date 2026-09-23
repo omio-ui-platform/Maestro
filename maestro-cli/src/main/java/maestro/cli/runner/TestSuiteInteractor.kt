@@ -47,6 +47,12 @@ class TestSuiteInteractor(
     private val reporter: TestSuiteReporter,
     private val shardIndex: Int? = null,
     private val recordingEnabled: Boolean = true,
+    /**
+     * Record every attempt and keep the recording when the flow produced AI findings, not only when
+     * it failed. Off by default, and set by the localization job alone -- see `shouldRecord` and
+     * `shouldUpload` below for what it changes and why the default must stay off.
+     */
+    private val recordOnFindings: Boolean = false,
     private val gcsBucket: String? = null,
     private val attemptNumber: Int = 1,
     private val maxRetries: Int = 1,
@@ -195,19 +201,29 @@ class TestSuiteInteractor(
         logger.info("$shardPrefix Running flow $flowName")
         PrintUtils.message("${shardPrefix}Running: $flowName")
 
-        // Set up screen recording if enabled AND this is the last attempt
-        // (no point recording if test will be retried anyway)
-        // Also require BUILD_NAME, BUILD_NUMBER, and DEVICE_NAME to be set (don't use defaults)
+        // Record on the last attempt only, because a flow that is about to be retried does not need
+        // a video -- the retry's own recording supersedes it. Requires BUILD_NAME, BUILD_NUMBER and
+        // DEVICE_NAME, which name the object; no defaults.
+        //
+        // `recordOnFindings` lifts the last-attempt condition, and it has to: a flow that PASSES is
+        // never retried, so it is only ever on its last attempt by accident of the counter. Without
+        // this, a passing flow with findings could never be recorded at all and relaxing the upload
+        // condition alone would achieve nothing.
+        //
+        // The cost is that every attempt records, and attempts that turn out not to need the file
+        // discard it below. That is unavoidable: whether a flow finds anything is not knowable until
+        // it has run, and recording cannot start retroactively.
         val isLastAttempt = attemptNumber >= maxRetries
         val hasRequiredEnvVars = buildName != null && buildNumber != null && deviceName != null
-        val shouldRecord = recordingEnabled && isLastAttempt && hasRequiredEnvVars
+        val shouldRecord = recordingEnabled && (isLastAttempt || recordOnFindings) && hasRequiredEnvVars
 
         // DEBUG LOGS: Recording decision
         logger.info("${shardPrefix}[RECORDING-DEBUG] Flow: $flowName")
         logger.info("${shardPrefix}[RECORDING-DEBUG] recordingEnabled=$recordingEnabled, attemptNumber=$attemptNumber, maxRetries=$maxRetries")
         logger.info("${shardPrefix}[RECORDING-DEBUG] isLastAttempt=$isLastAttempt (attemptNumber >= maxRetries = $attemptNumber >= $maxRetries)")
         logger.info("${shardPrefix}[RECORDING-DEBUG] hasRequiredEnvVars=$hasRequiredEnvVars (buildName=$buildName, buildNumber=$buildNumber, deviceName=$deviceName)")
-        logger.info("${shardPrefix}[RECORDING-DEBUG] shouldRecord=$shouldRecord (recordingEnabled && isLastAttempt && hasRequiredEnvVars)")
+        logger.info("${shardPrefix}[RECORDING-DEBUG] recordOnFindings=$recordOnFindings")
+        logger.info("${shardPrefix}[RECORDING-DEBUG] shouldRecord=$shouldRecord (recordingEnabled && (isLastAttempt || recordOnFindings) && hasRequiredEnvVars)")
         logger.info("${shardPrefix}[RECORDING-DEBUG] gcsBucket=${gcsBucket ?: "NOT SET"}")
         logger.info("${shardPrefix}[RECORDING-DEBUG] testOutputDir=$testOutputDir")
 
@@ -284,9 +300,25 @@ class TestSuiteInteractor(
                 screenRecording.close()
                 recordingSink?.close()
 
-                // Only upload to GCS if test FAILED and GCS is configured
-                // (no need to store recordings of passing tests)
-                val shouldUpload = flowStatus == FlowStatus.ERROR && gcsBucket != null && recordingFile != null
+                // WHICH RECORDINGS ARE WORTH KEEPING:
+                //
+                //   completed, no findings              discard  -- nothing to look at
+                //   completed, findings                 UPLOAD   -- it will not run again, so this
+                //                                                   is the only chance to keep it
+                //   not completed, not last attempt     discard  -- the retry's video supersedes it
+                //   not completed, last attempt         UPLOAD   -- the video IS the diagnostic
+                //
+                // `hasFindings` is derived, not configured: `aiOutput` is filled by
+                // `onCommandGeneratedOutput` while the flow runs, just above, so by here it already
+                // knows what the run found.
+                //
+                // Gated on `recordOnFindings` so this is the localization job's behaviour alone.
+                // Without the gate, any flow that passes while holding AI defects would start
+                // uploading -- `assertNoDefectsWithAI` writes into this same `aiOutput`, and other
+                // suites use it.
+                val hasFindings = recordOnFindings && aiOutput.screenOutputs.any { it.defects.isNotEmpty() }
+                val shouldUpload = (hasFindings || (flowStatus == FlowStatus.ERROR && isLastAttempt))
+                    && gcsBucket != null && recordingFile != null
 
                 // DEBUG LOGS: Upload decision
                 logger.info("${shardPrefix}[RECORDING-DEBUG] Post-execution state:")
@@ -294,7 +326,8 @@ class TestSuiteInteractor(
                 logger.info("${shardPrefix}[RECORDING-DEBUG] recordingFile=${recordingFile?.absolutePath ?: "NULL"}")
                 logger.info("${shardPrefix}[RECORDING-DEBUG] recordingFile.exists=${recordingFile?.exists()}")
                 logger.info("${shardPrefix}[RECORDING-DEBUG] gcsBucket=${gcsBucket ?: "NOT SET"}")
-                logger.info("${shardPrefix}[RECORDING-DEBUG] shouldUpload=$shouldUpload (flowStatus==ERROR && gcsBucket!=null && recordingFile!=null)")
+                logger.info("${shardPrefix}[RECORDING-DEBUG] hasFindings=$hasFindings, isLastAttempt=$isLastAttempt")
+                logger.info("${shardPrefix}[RECORDING-DEBUG] shouldUpload=$shouldUpload (hasFindings || (ERROR && isLastAttempt)) && gcsBucket!=null && recordingFile!=null)")
 
                 if (shouldUpload && recordingFile != null) {
                     val gcsUrl = GcsUploader.uploadRecording(

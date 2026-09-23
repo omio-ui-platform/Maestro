@@ -658,11 +658,18 @@ class TestCommand : Callable<Int> {
         // same GCS object. Falls back to the process's own JOB_NAME env var (set
         // automatically by Jenkins) if not explicitly passed via -e.
         val jobName = env["JOB_NAME"] ?: System.getenv("JOB_NAME")
+        // Keep the recording of a PASSING flow when it produced AI findings, instead of only
+        // recordings of failures. Set by the localization job alone: its flows report untranslated
+        // strings without failing, so the runs worth watching are the ones that pass. Every other
+        // suite leaves this unset and keeps the failure-only behaviour untouched.
+        val recordOnFindings =
+            (env["RECORD_ON_FINDINGS"] ?: System.getenv("RECORD_ON_FINDINGS"))?.toBoolean() ?: false
 
         // DEBUG LOGS: Recording configuration passed to TestSuiteInteractor
         println("[TEST-CMD-DEBUG] Creating TestSuiteInteractor with recording config:")
         println("[TEST-CMD-DEBUG]   noRecord=$noRecord -> recordingEnabled=${!noRecord}")
         println("[TEST-CMD-DEBUG]   gcsBucket='$gcsBucket' -> ${gcsBucket.ifBlank { null }}")
+        println("[TEST-CMD-DEBUG]   recordOnFindings=$recordOnFindings")
         println("[TEST-CMD-DEBUG]   attemptNumber=$effectiveAttemptNumber (env=${env["ATTEMPT_NUMBER"]}, cli=$attemptNumber)")
         println("[TEST-CMD-DEBUG]   maxRetries=$effectiveMaxRetries (env=${env["MAX_RETRIES"]}, cli=$maxRetries)")
         println("[TEST-CMD-DEBUG]   buildName=$buildName")
@@ -677,6 +684,7 @@ class TestCommand : Callable<Int> {
             shardIndex = if (chunkPlans.size == 1) null else shardIndex,
             reporter = ReporterFactory.buildReporter(format, testSuiteName),
             recordingEnabled = !noRecord,
+            recordOnFindings = recordOnFindings,
             gcsBucket = gcsBucket.ifBlank { null },
             attemptNumber = effectiveAttemptNumber,
             maxRetries = effectiveMaxRetries,
