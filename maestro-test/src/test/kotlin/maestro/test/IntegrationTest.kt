@@ -5469,38 +5469,33 @@ class IntegrationTest {
     }
 
     @Test
-    fun `Case 155 - assertLanguageWithAI fails naming every untranslated string`() {
+    fun `Case 155 - assertLanguageWithAI reports every untranslated string without failing`() {
         val commands = readCommands("155_assert_language")
         val driver = driver { element { text = "Sign in"; bounds = Bounds(0, 0, 100, 50) } }
         val engine = FakeAIPredictionEngine(listOf(violation("Sign in"), violation("Best deals")))
         val generatedOutput = mutableListOf<List<Defect>>()
 
-        val error = assertThrows<MaestroException.AssertionFailure> {
-            Maestro(driver).use {
-                runBlocking {
-                    languageOrchestra(it, engine, onCommandGeneratedOutput = { _, defects, _ ->
-                        generatedOutput += defects
-                    }).runFlow(commands)
-                }
+        // DOES NOT THROW. Findings are an outcome to report, not a failure: a flow that finds
+        // untranslated strings has done its job, and failing here made a gap indistinguishable from
+        // a broken flow -- and made the pipeline retry the whole flow to re-find a string that
+        // cannot change between attempts. The command fails only when the check cannot RUN.
+        Maestro(driver).use {
+            runBlocking {
+                languageOrchestra(it, engine, onCommandGeneratedOutput = { _, defects, _ ->
+                    generatedOutput += defects
+                }).runFlow(commands)
             }
         }
 
-        // One line, no parentheses, strings named: a failed flow's message is printed inline as
-        // ` (<message>)` and the pipeline greps that line for the CI report, capturing with
-        // `(\s+\(.+\))?`. A newline or a parenthesis here truncates that capture, so the row
-        // would show a fragment instead of the strings.
-        assertThat(error.message).doesNotContain("\n")
-        assertThat(error.message).doesNotContain("(")
-        assertThat(error.message).contains("Not fully in German [de]")
-        assertThat(error.message).contains("2 untranslated")
-        assertThat(error.message).contains("\"Sign in\"")
-        assertThat(error.message).contains("\"Best deals\"")
-        // The per-string reasoning is still available, just not on the one-line message.
-        assertThat(error.debugMessage).contains("Screen is not fully in German [de]")
-        assertThat(error.debugMessage).contains("\"Sign in\" (English)")
-        // Its own category, so the AI report does not label it as an assertNoDefectsWithAI finding.
+        // The AI output is the whole record now, so it has to name every string and say why.
         assertThat(generatedOutput).hasSize(1)
-        assertThat(generatedOutput.first().map { it.category }).containsExactly("untranslated", "untranslated")
+        val defects = generatedOutput.first()
+        assertThat(defects.map { it.offendingText }).containsExactly("Sign in", "Best deals")
+        // Its own category, so the AI report does not label it as an assertNoDefectsWithAI finding.
+        assertThat(defects.map { it.category }).containsExactly("untranslated", "untranslated")
+        // Per-string reasoning names the detected language and what was expected.
+        assertThat(defects.first().reasoning).contains("\"Sign in\" looks English")
+        assertThat(defects.first().reasoning).contains("expected German")
     }
 
     @Test
@@ -5518,18 +5513,17 @@ class IntegrationTest {
             ),
         )
 
-        val error = assertThrows<MaestroException.AssertionFailure> {
-            Maestro(driver).use {
-                runBlocking { languageOrchestra(it, engine).runFlow(commands) }
+        val generatedOutput = mutableListOf<List<Defect>>()
+        Maestro(driver).use {
+            runBlocking {
+                languageOrchestra(it, engine, onCommandGeneratedOutput = { _, defects, _ ->
+                    generatedOutput += defects
+                }).runFlow(commands)
             }
         }
 
-        assertThat(error.message).contains("1 untranslated")
-        assertThat(error.message).contains("\"Sign in\"")
-        assertThat(error.message).doesNotContain("Paris")
-        assertThat(error.message).doesNotContain("Booking.com")
-        // Discarded by the model's own verdict, so not counted as `ignore`-suppressed either.
-        assertThat(error.message).doesNotContain("suppressed")
+        assertThat(generatedOutput).hasSize(1)
+        assertThat(generatedOutput.first().map { it.offendingText }).containsExactly("Sign in")
     }
 
     @Test
@@ -5556,18 +5550,18 @@ class IntegrationTest {
             listOf(violation("Omio"), violation("Booking.com"), violation("Sign in")),
         )
 
-        val error = assertThrows<MaestroException.AssertionFailure> {
-            Maestro(driver).use {
-                runBlocking { languageOrchestra(it, engine).runFlow(commands) }
+        val generatedOutput = mutableListOf<List<Defect>>()
+        Maestro(driver).use {
+            runBlocking {
+                languageOrchestra(it, engine, onCommandGeneratedOutput = { _, defects, _ ->
+                    generatedOutput += defects
+                }).runFlow(commands)
             }
         }
 
-        assertThat(error.message).doesNotContain("\n")
-        assertThat(error.message).contains("1 untranslated")
-        assertThat(error.message).contains("\"Sign in\"")
-        assertThat(error.message).doesNotContain("Booking.com")
-        assertThat(error.message).contains("[2 suppressed by ignore]")
-        assertThat(error.debugMessage).contains("2 further matches suppressed by `ignore`")
+        // Only the surviving string is reported; the two `ignore` matches never become defects.
+        assertThat(generatedOutput).hasSize(1)
+        assertThat(generatedOutput.first().map { it.offendingText }).containsExactly("Sign in")
     }
 
     private fun readCommands(
