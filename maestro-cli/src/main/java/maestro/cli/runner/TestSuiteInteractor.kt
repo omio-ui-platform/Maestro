@@ -294,11 +294,15 @@ class TestSuiteInteractor(
         }
 
         // Stop screen recording and handle upload/cleanup
+        var recordingUploaded = false
+        var recordingHadContent = false
+        var recordingError: String? = null
         if (screenRecording != null) {
             try {
                 logger.info("${shardPrefix}Stopping screen recording for flow $flowName")
                 screenRecording.close()
                 recordingSink?.close()
+                recordingHadContent = (recordingFile?.length() ?: 0L) > 0L
 
                 // WHICH RECORDINGS ARE WORTH KEEPING:
                 //
@@ -346,6 +350,7 @@ class TestSuiteInteractor(
                         bucketName = gcsBucket
                     )
                     if (gcsUrl != null) {
+                        recordingUploaded = true
                         logger.info("${shardPrefix}Recording uploaded to GCS: $gcsUrl")
                         // Output in parseable format for external pipelines
                         PrintUtils.message("[RECORDING] ${flowFile.nameWithoutExtension} $gcsUrl")
@@ -365,6 +370,7 @@ class TestSuiteInteractor(
                     }
                 }
             } catch (e: Exception) {
+                recordingError = e.message ?: e.javaClass.simpleName
                 logger.warn("${shardPrefix}Failed to process screen recording: ${e.message}")
                 // Attempt cleanup on error too
                 try {
@@ -372,6 +378,21 @@ class TestSuiteInteractor(
                 } catch (cleanupError: Exception) {
                     logger.warn("${shardPrefix}Failed to cleanup recording file: ${cleanupError.message}")
                 }
+            }
+        }
+
+        // A failed last attempt that was meant to be recorded always ends in exactly one stdout line:
+        // `[RECORDING] <flow> <url>` above, or this one saying why there is no video.
+        if (flowStatus == FlowStatus.ERROR && isLastAttempt && shouldRecord) {
+            RecordingMissingReason.of(
+                gcsBucket = gcsBucket,
+                recordingStarted = screenRecording != null,
+                recordingHadContent = recordingHadContent,
+                uploaded = recordingUploaded,
+                processingError = recordingError,
+            )?.let { reason ->
+                logger.warn("${shardPrefix}No recording uploaded for flow $flowName: $reason")
+                PrintUtils.message(RecordingMissingReason.line(flowFile.nameWithoutExtension, reason))
             }
         }
 
