@@ -658,6 +658,10 @@ class TestCommand : Callable<Int> {
         // same GCS object. Falls back to the process's own JOB_NAME env var (set
         // automatically by Jenkins) if not explicitly passed via -e.
         val jobName = env["JOB_NAME"] ?: System.getenv("JOB_NAME")
+        // Like every other recording input above, `-e GCS_BUCKET` wins; `--gcs-bucket` / the process
+        // env are the fallback. Reading only the latter silently dropped every video for callers that
+        // passed the bucket with `-e` (goeuro/app UP-5720).
+        val effectiveGcsBucket = resolveGcsBucket(env, gcsBucket)
         // Keep the recording of a PASSING flow when it produced AI findings, instead of only
         // recordings of failures. Set by the localization job alone: its flows report untranslated
         // strings without failing, so the runs worth watching are the ones that pass. Every other
@@ -668,7 +672,7 @@ class TestCommand : Callable<Int> {
         // DEBUG LOGS: Recording configuration passed to TestSuiteInteractor
         println("[TEST-CMD-DEBUG] Creating TestSuiteInteractor with recording config:")
         println("[TEST-CMD-DEBUG]   noRecord=$noRecord -> recordingEnabled=${!noRecord}")
-        println("[TEST-CMD-DEBUG]   gcsBucket='$gcsBucket' -> ${gcsBucket.ifBlank { null }}")
+        println("[TEST-CMD-DEBUG]   gcsBucket='$gcsBucket' (env=${env["GCS_BUCKET"]}) -> $effectiveGcsBucket")
         println("[TEST-CMD-DEBUG]   recordOnFindings=$recordOnFindings")
         println("[TEST-CMD-DEBUG]   attemptNumber=$effectiveAttemptNumber (env=${env["ATTEMPT_NUMBER"]}, cli=$attemptNumber)")
         println("[TEST-CMD-DEBUG]   maxRetries=$effectiveMaxRetries (env=${env["MAX_RETRIES"]}, cli=$maxRetries)")
@@ -685,7 +689,7 @@ class TestCommand : Callable<Int> {
             reporter = ReporterFactory.buildReporter(format, testSuiteName),
             recordingEnabled = !noRecord,
             recordOnFindings = recordOnFindings,
-            gcsBucket = gcsBucket.ifBlank { null },
+            gcsBucket = effectiveGcsBucket,
             attemptNumber = effectiveAttemptNumber,
             maxRetries = effectiveMaxRetries,
             buildName = buildName,
@@ -832,3 +836,7 @@ class TestCommand : Callable<Int> {
         promotionStateManager.setLastShownDate("debug", today)
     }
 }
+
+/** `-e GCS_BUCKET` first, then `--gcs-bucket` / the process env (its default); blank means unset. */
+internal fun resolveGcsBucket(env: Map<String, String>, cliOrProcessEnvBucket: String): String? =
+    env["GCS_BUCKET"]?.takeIf { it.isNotBlank() } ?: cliOrProcessEnvBucket.ifBlank { null }

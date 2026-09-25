@@ -28,6 +28,8 @@ import kotlin.math.roundToLong
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import maestro.cli.util.GcsUploader
+import maestro.cli.util.UploadResult
+import kotlin.coroutines.cancellation.CancellationException
 import maestro.cli.util.ScreenshotUtils
 import maestro.orchestra.util.Env.withDefaultEnvVars
 import maestro.orchestra.util.Env.withInjectedShellEnvVars
@@ -251,6 +253,10 @@ class TestSuiteInteractor(
                 maestro.startScreenRecording(recordingSink)
             } catch (e: Exception) {
                 logger.warn("${shardPrefix}Failed to start screen recording: ${e.message}")
+                // Nothing will ever stop this recording, so release its sink and empty file here --
+                // the cleanup below only runs for a recording that started.
+                runCatching { recordingSink.close() }
+                runCatching { recordingFile?.delete() }
                 null
             }
         } else null
@@ -293,39 +299,51 @@ class TestSuiteInteractor(
             }
         }
 
+        // WHICH RECORDINGS ARE WORTH KEEPING:
+        //
+        //   completed, no findings              discard  -- nothing to look at
+        //   completed, findings                 UPLOAD   -- it will not run again, so this
+        //                                                   is the only chance to keep it
+        //   not completed, not last attempt     discard  -- the retry's video supersedes it
+        //   not completed, last attempt         UPLOAD   -- the video IS the diagnostic
+        //
+        // `hasFindings` is derived, not configured: `aiOutput` is filled by
+        // `onCommandGeneratedOutput` while the flow runs, just above, so by here it already
+        // knows what the run found.
+        //
+        // Gated on `recordOnFindings` so this is the localization job's behaviour alone.
+        // Without the gate, any flow that passes while holding AI defects would start
+        // uploading -- `assertNoDefectsWithAI` writes into this same `aiOutput`, and other
+        // suites use it.
+        //
+        // `hasFindings` only keeps a PASSING flow's video. A failed attempt with findings
+        // still waits for its last attempt like any failure: the retry records its own video.
+        // (Build 90 shipped `hasFindings || (ERROR && isLastAttempt)`, which also uploaded
+        // every failed non-final attempt that had findings -- not what the table above says.)
+        //
+        // Decided here, outside the try below, so a failure while stopping the recording still
+        // knows the video was wanted and reports why it is missing.
+        val hasFindings = recordOnFindings && aiOutput.screenOutputs.any { it.defects.isNotEmpty() }
+        val videoWanted = shouldRecord && (
+            (flowStatus == FlowStatus.SUCCESS && hasFindings) ||
+                (flowStatus == FlowStatus.ERROR && isLastAttempt)
+            )
+
         // Stop screen recording and handle upload/cleanup
+        var recordingUploaded = false
+        var recordingHadContent = false
+        var uploadFailure: String? = null
+        var recordingError: String? = null
         if (screenRecording != null) {
             try {
                 logger.info("${shardPrefix}Stopping screen recording for flow $flowName")
                 screenRecording.close()
                 recordingSink?.close()
+                recordingHadContent = (recordingFile?.length() ?: 0L) > 0L
 
-                // WHICH RECORDINGS ARE WORTH KEEPING:
-                //
-                //   completed, no findings              discard  -- nothing to look at
-                //   completed, findings                 UPLOAD   -- it will not run again, so this
-                //                                                   is the only chance to keep it
-                //   not completed, not last attempt     discard  -- the retry's video supersedes it
-                //   not completed, last attempt         UPLOAD   -- the video IS the diagnostic
-                //
-                // `hasFindings` is derived, not configured: `aiOutput` is filled by
-                // `onCommandGeneratedOutput` while the flow runs, just above, so by here it already
-                // knows what the run found.
-                //
-                // Gated on `recordOnFindings` so this is the localization job's behaviour alone.
-                // Without the gate, any flow that passes while holding AI defects would start
-                // uploading -- `assertNoDefectsWithAI` writes into this same `aiOutput`, and other
-                // suites use it.
-                //
-                // `hasFindings` only keeps a PASSING flow's video. A failed attempt with findings
-                // still waits for its last attempt like any failure: the retry records its own video.
-                // (Build 90 shipped `hasFindings || (ERROR && isLastAttempt)`, which also uploaded
-                // every failed non-final attempt that had findings -- not what the table above says.)
-                val hasFindings = recordOnFindings && aiOutput.screenOutputs.any { it.defects.isNotEmpty() }
-                val shouldUpload = (
-                    (flowStatus == FlowStatus.SUCCESS && hasFindings) ||
-                        (flowStatus == FlowStatus.ERROR && isLastAttempt)
-                    ) && gcsBucket != null && recordingFile != null
+                // An empty file is not uploaded: it would be linked as a normal "Rec" that does not
+                // play. It is reported as `empty-recording` instead.
+                val shouldUpload = videoWanted && gcsBucket != null && recordingFile != null && recordingHadContent
 
                 // DEBUG LOGS: Upload decision
                 logger.info("${shardPrefix}[RECORDING-DEBUG] Post-execution state:")
@@ -333,22 +351,25 @@ class TestSuiteInteractor(
                 logger.info("${shardPrefix}[RECORDING-DEBUG] recordingFile=${recordingFile?.absolutePath ?: "NULL"}")
                 logger.info("${shardPrefix}[RECORDING-DEBUG] recordingFile.exists=${recordingFile?.exists()}")
                 logger.info("${shardPrefix}[RECORDING-DEBUG] gcsBucket=${gcsBucket ?: "NOT SET"}")
-                logger.info("${shardPrefix}[RECORDING-DEBUG] hasFindings=$hasFindings, isLastAttempt=$isLastAttempt")
-                logger.info("${shardPrefix}[RECORDING-DEBUG] shouldUpload=$shouldUpload ((SUCCESS && hasFindings) || (ERROR && isLastAttempt)) && gcsBucket!=null && recordingFile!=null)")
+                logger.info("${shardPrefix}[RECORDING-DEBUG] hasFindings=$hasFindings, isLastAttempt=$isLastAttempt, recordingHadContent=$recordingHadContent")
+                logger.info("${shardPrefix}[RECORDING-DEBUG] shouldUpload=$shouldUpload (videoWanted=$videoWanted && gcsBucket!=null && recordingFile!=null && recordingHadContent)")
 
                 if (shouldUpload && recordingFile != null) {
-                    val gcsUrl = GcsUploader.uploadRecording(
+                    when (val upload = GcsUploader.uploadRecording(
                         file = recordingFile,
                         flowName = flowFile.nameWithoutExtension,
                         buildNumber = buildNumber!!,
                         attemptNumber = attemptNumber,
                         jobName = jobName,
                         bucketName = gcsBucket
-                    )
-                    if (gcsUrl != null) {
-                        logger.info("${shardPrefix}Recording uploaded to GCS: $gcsUrl")
-                        // Output in parseable format for external pipelines
-                        PrintUtils.message("[RECORDING] ${flowFile.nameWithoutExtension} $gcsUrl")
+                    )) {
+                        is UploadResult.Uploaded -> {
+                            recordingUploaded = true
+                            logger.info("${shardPrefix}Recording uploaded to GCS: ${upload.url}")
+                            // Output in parseable format for external pipelines
+                            PrintUtils.message("[RECORDING] ${flowFile.nameWithoutExtension} ${upload.url}")
+                        }
+                        is UploadResult.Failed -> uploadFailure = upload.detail
                     }
                 } else if (flowStatus == FlowStatus.SUCCESS) {
                     logger.info("${shardPrefix}Test passed, skipping recording upload for flow $flowName")
@@ -364,7 +385,12 @@ class TestSuiteInteractor(
                         logger.warn("${shardPrefix}Failed to delete local recording file: ${recordingFile.absolutePath}")
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
+                // Throwable, not Exception: a recorder's close() can rethrow a LinkageError (e.g.
+                // NoClassDefFoundError from a dependency skew), which would otherwise escape runFlow
+                // and abort every remaining flow in the shard. Cancellation and VM errors still propagate.
+                if (e is CancellationException || e is VirtualMachineError) throw e
+                recordingError = RecordingMissingReason.describe(e)
                 logger.warn("${shardPrefix}Failed to process screen recording: ${e.message}")
                 // Attempt cleanup on error too
                 try {
@@ -372,6 +398,22 @@ class TestSuiteInteractor(
                 } catch (cleanupError: Exception) {
                     logger.warn("${shardPrefix}Failed to cleanup recording file: ${cleanupError.message}")
                 }
+            }
+        }
+
+        // A flow whose video was wanted always ends in exactly one stdout line: `[RECORDING] <flow>
+        // <url>` above, or this one saying why there is no video.
+        if (videoWanted) {
+            RecordingMissingReason.of(
+                gcsBucket = gcsBucket,
+                recordingStarted = screenRecording != null,
+                recordingHadContent = recordingHadContent,
+                uploaded = recordingUploaded,
+                uploadFailure = uploadFailure,
+                processingError = recordingError,
+            )?.let { reason ->
+                logger.warn("${shardPrefix}No recording uploaded for flow $flowName: $reason")
+                PrintUtils.message(RecordingMissingReason.line(flowFile.nameWithoutExtension, reason))
             }
         }
 
