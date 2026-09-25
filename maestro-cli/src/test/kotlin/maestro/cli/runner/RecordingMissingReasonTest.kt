@@ -10,8 +10,9 @@ class RecordingMissingReasonTest {
         recordingStarted: Boolean = true,
         recordingHadContent: Boolean = true,
         uploaded: Boolean = false,
+        uploadFailure: String? = null,
         processingError: String? = null,
-    ) = RecordingMissingReason.of(gcsBucket, recordingStarted, recordingHadContent, uploaded, processingError)
+    ) = RecordingMissingReason.of(gcsBucket, recordingStarted, recordingHadContent, uploaded, uploadFailure, processingError)
 
     @Test
     fun `an uploaded recording has no missing reason`() {
@@ -42,8 +43,26 @@ class RecordingMissingReasonTest {
     }
 
     @Test
-    fun `everything in place but no url means the upload failed`() {
-        assertThat(reason()).startsWith("upload-failed")
+    fun `an upload failure carries the uploader's own detail`() {
+        assertThat(reason(uploadFailure = "gcloud exit 1: ERROR: (gcloud.storage.cp) 403 does not have storage.objects.create access"))
+            .isEqualTo("upload-failed (gcloud exit 1: ERROR: (gcloud.storage.cp) 403 does not have storage.objects.create access)")
+        assertThat(reason()).isEqualTo("upload-failed (unknown)")
+    }
+
+    @Test
+    fun `describe keeps the exception type, with or without a message`() {
+        assertThat(RecordingMissingReason.describe(java.io.IOException(""))).isEqualTo("IOException")
+        assertThat(RecordingMissingReason.describe(java.net.SocketTimeoutException("timeout")))
+            .isEqualTo("SocketTimeoutException: timeout")
+    }
+
+    @Test
+    fun `free text is one capped line with Jansi markup delimiters neutralised`() {
+        val result = reason(processingError = "boom @|red oops|@ " + "x".repeat(500))!!
+
+        assertThat(result).doesNotContain("@|")
+        assertThat(result).doesNotContain("|@")
+        assertThat(result.length).isLessThan(230)
     }
 
     @Test

@@ -2,6 +2,9 @@ package maestro.cli.util
 
 import com.google.common.truth.Truth.assertThat
 import org.junit.jupiter.api.Test
+import java.io.File
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.measureTime
 
 class GcsUploaderTest {
 
@@ -100,5 +103,40 @@ class GcsUploaderTest {
         )
 
         assertThat(iosStable).isNotEqualTo(iosExpoStable)
+    }
+
+    @Test
+    fun `the timeout fires even while the command is still producing no output`() {
+        // Regression: output used to be read to EOF before waitFor(timeout), so a stalled gcloud
+        // hung the shard instead of timing out.
+        lateinit var outcome: GcsUploader.CommandOutcome
+        val elapsed = measureTime {
+            outcome = GcsUploader.runCommand(listOf("sh", "-c", "echo started; sleep 30"), 1.seconds)
+        }
+
+        assertThat(outcome).isInstanceOf(GcsUploader.CommandOutcome.TimedOut::class.java)
+        assertThat((outcome as GcsUploader.CommandOutcome.TimedOut).output).contains("started")
+        assertThat(elapsed).isLessThan(15.seconds)
+    }
+
+    @Test
+    fun `a failing command reports its exit code and its last output line`() {
+        val outcome = GcsUploader.runCommand(
+            listOf("sh", "-c", "echo 'Copying file'; echo 'ERROR: 403 denied' >&2; exit 3"),
+            10.seconds,
+        )
+
+        assertThat(outcome).isInstanceOf(GcsUploader.CommandOutcome.Exited::class.java)
+        outcome as GcsUploader.CommandOutcome.Exited
+        assertThat(outcome.exitCode).isEqualTo(3)
+        assertThat(GcsUploader.lastMeaningfulLine(outcome.output)).isEqualTo("ERROR: 403 denied")
+    }
+
+    @Test
+    fun `no bucket and a missing file are reported, not swallowed`() {
+        assertThat(GcsUploader.uploadFile(File("x.mp4"), "o.mp4", bucketName = " "))
+            .isEqualTo(UploadResult.Failed("no bucket"))
+        assertThat(GcsUploader.uploadFile(File("does-not-exist-${System.nanoTime()}.mp4"), "o.mp4", bucketName = "b"))
+            .isEqualTo(UploadResult.Failed("local file missing"))
     }
 }
