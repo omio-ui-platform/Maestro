@@ -105,9 +105,8 @@ class OpenAIClient {
                     |
                     |ON-SCREEN STRINGS -- authoritative for what the text says. Judge these strings, and
                     |use the screenshot to see how each one is used and whether a user can read it. Text
-                    |visible in the screenshot but absent here (drawn inside an image, a chart or a map,
-                    |or shown in a web view, whose text is deliberately not listed) is also in scope:
-                    |read it from the screenshot.
+                    |visible in the screenshot but absent here (drawn inside an image, a chart or a map)
+                    |is also in scope.
                     |
                     |$onScreenText
                     """.trimMargin("|")

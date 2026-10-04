@@ -223,13 +223,6 @@ class IOSDriver(
         val checked = element.elementType in CHECKABLE_ELEMENTS && element.value == "1"
         attributes["checked"] = checked.toString()
 
-        // ONLY web views carry their type. Tagging every node would make each one "non-default" to
-        // the MCP hierarchy compaction (ViewHierarchyFormatters.hasNonDefaultValues), keeping nodes
-        // it drops today. Android already reports `class`, e.g. android.webkit.WebView.
-        if (element.elementType == ELEMENT_TYPE_WEB_VIEW) {
-            attributes[TreeNode.ELEMENT_TYPE_ATTRIBUTE] = TreeNode.ELEMENT_TYPE_WEB_VIEW
-        }
-
         val children = element.children.map {
             mapViewHierarchy(it)
         }
@@ -738,8 +731,6 @@ class IOSDriver(
         private const val ELEMENT_TYPE_CHECKBOX = 12
         private const val ELEMENT_TYPE_SWITCH = 40
         private const val ELEMENT_TYPE_TOGGLE = 41
-        // XCUIElementTypeWebView in XCUIAutomation's XCUIElementTypes.h.
-        private const val ELEMENT_TYPE_WEB_VIEW = 58
 
         private const val WARNING_MAX_DEPTH = 61
 
