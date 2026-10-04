@@ -343,7 +343,7 @@ screenshot. A web view is identified only by what the platform reports: Android'
 tags as `elementType=webView` on web view nodes only.
 
 **Commits:**
-- `f5dc8cab` fix(assert-language): read web view text from the screenshot, not the view hierarchy
+- `11ec8067` fix(assert-language): read web view text from the screenshot, not the view hierarchy
 
 #### View Hierarchy Failures (iOS)
 
