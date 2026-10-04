@@ -78,7 +78,25 @@ object VisibleTextExtractor {
     }
 
     fun extract(hierarchy: ViewHierarchy, maxStrings: Int = DEFAULT_MAX_STRINGS): Result =
-        extract(hierarchy.aggregate(), maxStrings)
+        extract(nodesOutsideWebViews(hierarchy.root), maxStrings)
+
+    /**
+     * WEB VIEW TEXT IS LEFT TO THE SCREENSHOT. A web view's accessibility tree does not surface its
+     * text the way native views do: it mixes test ids in with the copy, and because this list is
+     * what the prompt calls authoritative, the model reported those ids as untranslated strings.
+     * Leaving the whole subtree out makes the model read that area off the screenshot instead.
+     *
+     * A web view is identified only by what the platform itself reports for it -- Android's
+     * `android.webkit.WebView` class, iOS's XCUIElementTypeWebView (tagged by IOSDriver) -- never by
+     * ids, labels or text, which are the app's own and can say anything.
+     */
+    private fun nodesOutsideWebViews(node: TreeNode): List<TreeNode> =
+        if (isWebView(node)) emptyList()
+        else listOf(node) + node.children.flatMap { nodesOutsideWebViews(it) }
+
+    private fun isWebView(node: TreeNode): Boolean =
+        node.attributes[TreeNode.CLASS_ATTRIBUTE] == TreeNode.ANDROID_WEB_VIEW_CLASS ||
+            node.attributes[TreeNode.ELEMENT_TYPE_ATTRIBUTE] == TreeNode.ELEMENT_TYPE_WEB_VIEW
 
     fun extract(nodes: List<TreeNode>, maxStrings: Int = DEFAULT_MAX_STRINGS): Result {
         // Insertion-ordered so the list reads top-to-bottom like the screen does. The same string
