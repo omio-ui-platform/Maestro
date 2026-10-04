@@ -333,6 +333,18 @@ onFlowComplete:
 
 ### Fixed
 
+#### `assertLanguageWithAI`: web view text read from the screenshot only
+
+A web view's accessibility tree mixes test ids into its text, and the on-screen strings list the
+prompt calls authoritative turned those ids into false "untranslated" findings. The extractor now
+leaves out every node inside a web view, and the prompt tells the model to read that area off the
+screenshot. A web view is identified only by what the platform reports: Android's
+`android.webkit.WebView` class, and iOS's `XCUIElementTypeWebView` (58), which `IOSDriver` now
+tags as `elementType=webView` on web view nodes only.
+
+**Commits:**
+- _pending_
+
 #### View Hierarchy Failures (iOS)
 
 Added retry logic for transient `kAXErrorInvalidUIElement` errors that occur when UI elements are deallocated during traversal.
