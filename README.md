@@ -333,6 +333,17 @@ onFlowComplete:
 
 ### Fixed
 
+#### OpenAI requests work with reasoning models (`gpt-6-sol`)
+
+Every AI command failed with HTTP 400 on `gpt-6-sol`, which rejects the deprecated `max_tokens` and
+any `temperature` but its default. The OpenAI client now sends `max_completion_tokens`, and when a
+model refuses `temperature` it retries once without it, so older models keep 0.2 and no list of
+model names is needed. The OpenAI default model, used when `MAESTRO_CLI_AI_MODEL` is unset, is now
+`gpt-6-sol` instead of `gpt-4.1`.
+
+**Commits:**
+- _pending_
+
 #### View Hierarchy Failures (iOS)
 
 Added retry logic for transient `kAXErrorInvalidUIElement` errors that occur when UI elements are deallocated during traversal.
