@@ -347,7 +347,7 @@ This replaces an earlier, narrower fix that only left web view subtrees out of t
 
 **Commits:**
 - `11ec8067` fix(assert-language): read web view text from the screenshot, not the view hierarchy
-- _pending_
+- `cc50e513` fix(assert-language): judge the screenshot only, not view hierarchy text
 
 #### View Hierarchy Failures (iOS)
 
