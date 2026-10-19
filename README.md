@@ -305,6 +305,16 @@ onFlowComplete:
 - `ef093253` feat: bump java from 1.8 to 17
 - `a451de2b` update gradle version
 
+#### iOS driver minimum: iOS 14 → 15
+
+Xcode 27 (iOS Simulator SDK 27.0) supports deployment targets 15.0 to 27.0 only, so the iOS driver
+build failed on the Jenkins machine once it was upgraded (`maestro-pr-check` #79). The driver's
+Xcode targets and the `MaestroDriverLib` package now require iOS 15. Upstream still declares 14.0,
+so expect a conflict on this line in an upstream sync until upstream bumps it too.
+
+**Commits:**
+- _pending_
+
 #### Cloud API
 
 - Removed Maestro Cloud API key requirement for AI predictions
