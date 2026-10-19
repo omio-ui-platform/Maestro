@@ -33,14 +33,4 @@ data class TreeNode(
         return listOf(this) + children.flatMap { it.aggregate() }
     }
 
-    companion object {
-        /** Android's node class, as UIAutomator reports it. */
-        const val CLASS_ATTRIBUTE = "class"
-        const val ANDROID_WEB_VIEW_CLASS = "android.webkit.WebView"
-
-        /** Set by IOSDriver on web views only; no other iOS node carries its type. */
-        const val ELEMENT_TYPE_ATTRIBUTE = "elementType"
-        const val ELEMENT_TYPE_WEB_VIEW = "webView"
-    }
-
 }

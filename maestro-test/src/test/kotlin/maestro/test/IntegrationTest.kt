@@ -5464,8 +5464,6 @@ class IntegrationTest {
         assertThat(engine.assertLanguageCalls).hasSize(1)
         assertThat(engine.assertLanguageCalls.first().language).isEqualTo("German")
         assertThat(engine.assertLanguageCalls.first().languageTag).isEqualTo("de")
-        // On-screen text is extracted from the hierarchy and handed over as plain strings.
-        assertThat(engine.assertLanguageCalls.first().onScreenText).contains("Anmelden")
     }
 
     @Test

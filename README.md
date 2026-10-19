@@ -305,6 +305,16 @@ onFlowComplete:
 - `ef093253` feat: bump java from 1.8 to 17
 - `a451de2b` update gradle version
 
+#### iOS driver minimum: iOS 14 → 15
+
+Xcode 27 (iOS Simulator SDK 27.0) supports deployment targets 15.0 to 27.0 only, so the iOS driver
+build failed on the Jenkins machine once it was upgraded (`maestro-pr-check` #79). The driver's
+Xcode targets and the `MaestroDriverLib` package now require iOS 15. Upstream still declares 14.0,
+so expect a conflict on this line in an upstream sync until upstream bumps it too.
+
+**Commits:**
+- _pending_
+
 #### Cloud API
 
 - Removed Maestro Cloud API key requirement for AI predictions
@@ -333,17 +343,21 @@ onFlowComplete:
 
 ### Fixed
 
-#### `assertLanguageWithAI`: web view text read from the screenshot only
+#### `assertLanguageWithAI`: judges the screenshot only
 
-A web view's accessibility tree mixes test ids into its text, and the on-screen strings list the
-prompt calls authoritative turned those ids into false "untranslated" findings. The extractor now
-leaves out every node inside a web view, and the prompt tells the model to read that area off the
-screenshot. A web view is identified only by what the platform reports: Android's
-`android.webkit.WebView` class, and iOS's `XCUIElementTypeWebView` (58), which `IOSDriver` now
-tags as `elementType=webView` on web view nodes only.
+The command no longer sends the view hierarchy's strings to the model, only the screenshot. The
+hierarchy carries text no user sees -- accessibility labels on logo buttons ("Apple", "Google"),
+test ids leaked by web views -- and the prompt called those strings authoritative, so the model
+reported them as untranslated copy. The prompt now limits the check to text readable in the
+screenshot. Trade-off: an offender's spelling is the model's transcription, not the app's exact
+string.
+
+This replaces an earlier, narrower fix that only left web view subtrees out of the strings (its
+`VisibleTextExtractor`, and `IOSDriver` tagging web views as `elementType=webView`, are removed).
 
 **Commits:**
 - `11ec8067` fix(assert-language): read web view text from the screenshot, not the view hierarchy
+- `cc50e513` fix(assert-language): judge the screenshot only, not view hierarchy text
 
 #### View Hierarchy Failures (iOS)
 

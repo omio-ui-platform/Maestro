@@ -74,8 +74,7 @@ class OpenAIClient {
      * spends most of its length on what NOT to report, and [ignore] lets a flow silence anything
      * still slipping through on a particular screen.
      *
-     * [onScreenText], when supplied, carries the exact on-screen strings, so the model does not
-     * have to read them off the screenshot and cannot mis-transcribe the text it reports back.
+     * The screenshot is the only input: what the model can read in it is what gets judged.
      */
     suspend fun assertLanguageWithAi(
         aiClient: AI,
@@ -83,7 +82,6 @@ class OpenAIClient {
         languageTag: String,
         screen: ByteArray,
         ignore: List<String> = emptyList(),
-        onScreenText: String? = null,
     ): AssertLanguageResponse {
         val prompt = buildString {
             appendLine(
@@ -99,20 +97,13 @@ class OpenAIClient {
                 """.trimIndent()
             )
 
-            if (!onScreenText.isNullOrBlank()) {
-                append(
-                    """
-                    |
-                    |ON-SCREEN STRINGS -- authoritative for what the text says. Judge these strings, and
-                    |use the screenshot to see how each one is used and whether a user can read it. Text
-                    |visible in the screenshot but absent here (drawn inside an image, a chart or a map,
-                    |or shown in a web view, whose text is deliberately not listed) is also in scope:
-                    |read it from the screenshot.
-                    |
-                    |$onScreenText
-                    """.trimMargin("|")
-                )
-            }
+            append(
+                """
+                |
+                |Judge ONLY text a user can actually read in the screenshot. Anything you cannot see on
+                |the screen is out of scope.
+                """.trimMargin("|")
+            )
 
             append(
                 """
@@ -175,9 +166,8 @@ class OpenAIClient {
             prompt,
             model = aiClient.defaultModel,
             maxTokens = 4096,
-            // The on-screen string list already carries the exact text, so the image is only needed
-            // for layout and visibility -- which "low" may well cover at a fraction of the tokens.
-            // Overridable so that can be measured on real screens rather than guessed at.
+            // "high": the screenshot is the only source of the text, so small print must stay
+            // legible to the model. Overridable for measuring cost against recall on real screens.
             imageDetail = System.getenv(IMAGE_DETAIL_ENV_VAR)?.takeIf { it.isNotBlank() } ?: "high",
             images = listOf(screen),
             jsonSchema = json.parseToJsonElement(assertLanguageSchema).jsonObject,
