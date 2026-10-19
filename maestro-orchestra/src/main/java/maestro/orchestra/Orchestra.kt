@@ -63,7 +63,6 @@ import maestro.orchestra.filter.FilterWithDescription
 import maestro.orchestra.filter.TraitFilters
 import maestro.orchestra.geo.Traveller
 import maestro.orchestra.util.ImageCropUtil
-import maestro.orchestra.util.VisibleTextExtractor
 import maestro.orchestra.util.LanguageViolationFilter
 import maestro.orchestra.util.ExpectedLanguage
 import maestro.orchestra.util.ViewHierarchySerializer
@@ -666,24 +665,17 @@ class Orchestra(
         val imageData = Buffer()
         maestro.takeScreenshot(imageData, compressed = false)
 
-        // One snapshot, used for both the model input and the failure's attached hierarchy. Two
-        // snapshots would cost a second round trip (~1s) and could disagree if the screen moved
-        // between them, leaving the reported strings describing a different screen than the dump.
-        val hierarchy = try {
-            maestro.viewHierarchy()
-        } catch (e: Exception) {
-            logger.warn("Could not read the view hierarchy for the language assertion: ${e.message}")
-            null
-        }
-        val onScreenText = hierarchy?.let { VisibleTextExtractor.extract(it).render() }
-
+        // THE SCREENSHOT ONLY, not the view hierarchy. The hierarchy carries text no user sees --
+        // accessibility labels on logo buttons ("Apple", "Google"), test ids leaked by web views --
+        // and the model reported it as untranslated copy. Judging the pixels keeps findings to what
+        // a traveller actually reads; the price is that an offender's spelling is the model's
+        // transcription rather than the app's exact string.
         val violations = AIPredictionEngine.assertLanguage(
             screen = imageData.copy().readByteArray(),
             aiClient = ai,
             language = expected.displayName,
             languageTag = expected.tag,
             ignore = command.ignore.filter { it.isNotBlank() },
-            onScreenText = onScreenText,
         )
 
         // Drop the entries the model itself judged acceptable, BEFORE the `ignore` filter. The

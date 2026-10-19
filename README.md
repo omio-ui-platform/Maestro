@@ -333,17 +333,21 @@ onFlowComplete:
 
 ### Fixed
 
-#### `assertLanguageWithAI`: web view text read from the screenshot only
+#### `assertLanguageWithAI`: judges the screenshot only
 
-A web view's accessibility tree mixes test ids into its text, and the on-screen strings list the
-prompt calls authoritative turned those ids into false "untranslated" findings. The extractor now
-leaves out every node inside a web view, and the prompt tells the model to read that area off the
-screenshot. A web view is identified only by what the platform reports: Android's
-`android.webkit.WebView` class, and iOS's `XCUIElementTypeWebView` (58), which `IOSDriver` now
-tags as `elementType=webView` on web view nodes only.
+The command no longer sends the view hierarchy's strings to the model, only the screenshot. The
+hierarchy carries text no user sees -- accessibility labels on logo buttons ("Apple", "Google"),
+test ids leaked by web views -- and the prompt called those strings authoritative, so the model
+reported them as untranslated copy. The prompt now limits the check to text readable in the
+screenshot. Trade-off: an offender's spelling is the model's transcription, not the app's exact
+string.
+
+This replaces an earlier, narrower fix that only left web view subtrees out of the strings (its
+`VisibleTextExtractor`, and `IOSDriver` tagging web views as `elementType=webView`, are removed).
 
 **Commits:**
 - `11ec8067` fix(assert-language): read web view text from the screenshot, not the view hierarchy
+- _pending_
 
 #### View Hierarchy Failures (iOS)
 

@@ -24,9 +24,8 @@ class CloudAIPredictionEngine() : AIPredictionEngine {
         language: String,
         languageTag: String,
         ignore: List<String>,
-        onScreenText: String?,
     ): List<LanguageViolation> {
-        return Prediction.assertLanguage(aiClient, language, languageTag, screen, ignore, onScreenText)
+        return Prediction.assertLanguage(aiClient, language, languageTag, screen, ignore)
     }
 
     @Suppress("DEPRECATION")
