@@ -428,6 +428,29 @@ class LocalSimulatorUtils(private val tempFileHandler: TempFileHandler) {
     }
 
     fun addMedia(deviceId: String, path: String) {
+        val source = File(path)
+        if (source.extension.equals("pdf", ignoreCase = true)) {
+            // PDFs belong in Files, not Photos (simctl addmedia only accepts images/videos).
+            val metadata = tempFileHandler.createTempFile("files-provider-", ".json")
+            try {
+                runCommand(listOf("xcrun", "simctl", "listapps", deviceId), outputFile = metadata)
+                runCommand(listOf("plutil", "-convert", "json", metadata.absolutePath))
+                val group = jacksonObjectMapper().readTree(metadata)
+                    .path("com.apple.DocumentsApp").path("GroupContainers")
+                    .path("group.com.apple.FileProvider.LocalStorage").asText()
+                check(group.startsWith("file:/")) {
+                    "The local Files provider is unavailable on simulator $deviceId"
+                }
+                val storage = File(File(java.net.URI(group)), "File Provider Storage")
+                check(storage.isDirectory || storage.mkdirs()) {
+                    "Cannot create the local Files storage on simulator $deviceId"
+                }
+                source.copyTo(File(storage, source.name), overwrite = true)
+            } finally {
+                metadata.delete()
+            }
+            return
+        }
         runCommand(
             listOf(
                 "xcrun",

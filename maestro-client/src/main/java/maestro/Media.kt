@@ -10,4 +10,5 @@ enum class MediaExt(val extName: String) {
     JPG("jpg"),
     GIF("gif"),
     MP4("mp4"),
+    PDF("pdf"),
 }

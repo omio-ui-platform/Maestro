@@ -16,6 +16,16 @@ import java.net.SocketTimeoutException
 class IOSDriverTest {
 
     @Test
+    fun `PDF filenames are accepted and forwarded unchanged to the device`() {
+        val device = mockk<IOSDevice>(relaxed = true)
+        maestro.utils.TempFileHandler().use { files ->
+            val pdf = files.createTempFile("boarding pass ", ".PDF").apply { writeText("%PDF-1.4") }
+            IOSDriver(device).addMedia(listOf(pdf))
+            verify { device.addMedia(pdf.path) }
+        }
+    }
+
+    @Test
     fun `IOSDeviceErrors Unreachable from the device is translated to DeviceUnreachableException`() {
         val cause = SocketTimeoutException("Read timed out")
         val iosDevice = mockk<IOSDevice>(relaxed = true)
