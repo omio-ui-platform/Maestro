@@ -66,3 +66,7 @@ tasks.named("compileKotlin", KotlinCompilationTask::class.java) {
         freeCompilerArgs.addAll("-Xjdk-release=17")
     }
 }
+
+tasks.named<Test>("test") {
+    useJUnitPlatform()
+}

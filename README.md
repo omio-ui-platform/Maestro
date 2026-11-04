@@ -343,6 +343,24 @@ so expect a conflict on this line in an upstream sync until upstream bumps it to
 
 ### Fixed
 
+#### OpenAI requests work with reasoning models (`gpt-6-sol`)
+
+Every AI command failed with HTTP 400 on `gpt-6-sol`, which rejects the deprecated `max_tokens` and
+any `temperature` but its default. The OpenAI client now sends `max_completion_tokens`, and when a
+model refuses `temperature` it retries once without it, so older models keep 0.2 and no list of
+model names is needed. The OpenAI default model, used when `MAESTRO_CLI_AI_MODEL` is unset, is now
+`gpt-6-sol` instead of `gpt-4.1`.
+
+**Fallback key.** An optional second OpenAI key, `MAESTRO_CLI_AI_KEY_FALLBACK`, is tried once when
+OpenAI refuses the first: 401, 403, 404 or 429 (bad key, no access to the model, model not found,
+out of credit or rate limited). `MAESTRO_CLI_AI_MODEL_FALLBACK` sets the model to use with it, for a
+key whose project lacks the first model; unset, the same model is used. Each fall-back is logged as
+a warning, with the status and OpenAI's error code, never the key. Without a fallback key a refusal
+fails the command as before. Covered by `maestro-ai`'s `OpenAIFallbackTest`.
+
+**Commits:**
+- _pending_
+
 #### `assertLanguageWithAI`: judges the screenshot only
 
 The command no longer sends the view hierarchy's strings to the model, only the screenshot. The

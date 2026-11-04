@@ -429,9 +429,12 @@ class Orchestra(
         logger.info("[Orchestra] Initializing AI")
         val apiKey = System.getenv(AI_KEY_ENV_VAR)
         val modelName: String? = System.getenv(AI.AI_MODEL_ENV_VAR)
+        val fallback = System.getenv(AI.AI_KEY_FALLBACK_ENV_VAR)?.takeIf { it.isNotBlank() }?.let {
+            OpenAI.Fallback(apiKey = it, model = System.getenv(AI.AI_MODEL_FALLBACK_ENV_VAR)?.takeIf { m -> m.isNotBlank() })
+        }
 
-        return if (modelName == null) OpenAI(apiKey = apiKey)
-        else if (modelName.startsWith("gpt-")) OpenAI(apiKey = apiKey, defaultModel = modelName)
+        return if (modelName == null) OpenAI(apiKey = apiKey, fallback = fallback)
+        else if (modelName.startsWith("gpt-")) OpenAI(apiKey = apiKey, defaultModel = modelName, fallback = fallback)
         else if (modelName.startsWith("claude-")) Claude(apiKey = apiKey, defaultModel = modelName)
         else throw IllegalStateException("Unsupported AI model: $modelName")
     }

@@ -9,8 +9,10 @@ import maestro.ai.common.Base64Image
 data class ChatCompletionRequest(
     val model: String,
     val messages: List<MessageContent>,
-    val temperature: Float,
-    @SerialName("max_tokens") val maxTokens: Int,
+    /** Null leaves it out, for models that accept only the default (see OpenAI.chatCompletion). */
+    val temperature: Float?,
+    // max_completion_tokens, not the deprecated max_tokens, which newer models (gpt-6-sol) reject.
+    @SerialName("max_completion_tokens") val maxTokens: Int,
     @SerialName("response_format") val responseFormat: ResponseFormat?,
     val seed: Int,
 )
