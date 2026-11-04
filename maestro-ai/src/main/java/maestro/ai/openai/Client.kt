@@ -24,6 +24,10 @@ import org.slf4j.LoggerFactory
 private const val API_URL = "https://api.openai.com/v1/chat/completions"
 private const val OPENAI_DEFAULT_TEMPERATURE = 1f
 
+// How OpenAI refuses a key rather than a request: 401 bad key, 403 no access (e.g. the model is not
+// allowed for the key's project), 404 model not found for it, 429 out of credit or rate limited.
+private val KEY_REFUSED = setOf(401, 403, 404, 429)
+
 private val logger = LoggerFactory.getLogger(OpenAI::class.java)
 
 class OpenAI(
@@ -33,7 +37,16 @@ class OpenAI(
     private val defaultTemperature: Float = 0.2f,
     private val defaultMaxTokens: Int = 1024,
     private val defaultImageDetail: String = "high",
+    private val fallback: Fallback? = null,
+    private val apiUrl: String = API_URL,
 ) : AI(defaultModel = defaultModel, httpClient = httpClient) {
+
+    /**
+     * A second key, tried once when OpenAI refuses [apiKey] (see [KEY_REFUSED]), with its own model
+     * when that key's project needs a different one. Read from [AI.AI_KEY_FALLBACK_ENV_VAR] and
+     * [AI.AI_MODEL_FALLBACK_ENV_VAR]. Without it, a refusal fails the command as before.
+     */
+    data class Fallback(val apiKey: String, val model: String? = null)
 
     // explicitNulls = false so a null temperature is left out of the request, not sent as null.
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
@@ -70,8 +83,8 @@ class OpenAI(
             )
         )
 
-        fun request(temperature: Float?) = ChatCompletionRequest(
-            model = actualModel,
+        fun request(model: String, temperature: Float?) = ChatCompletionRequest(
+            model = model,
             temperature = temperature,
             messages = messages,
             maxTokens = actualMaxTokens,
@@ -82,31 +95,45 @@ class OpenAI(
             ),
         )
 
-        var sentTemperature: Float? = actualTemperature
-        val chatCompletionResponse = try {
-            suspend fun post(temperature: Float?) = httpClient.post(API_URL) {
+        // One request with one key and model, plus its retry without temperature when needed.
+        suspend fun send(key: String, model: String): Attempt {
+            var temperature: Float? = actualTemperature
+            suspend fun post() = httpClient.post(apiUrl) {
                 contentType(ContentType.Application.Json)
-                headers["Authorization"] = "Bearer $apiKey"
-                setBody(json.encodeToString(request(temperature)))
+                headers["Authorization"] = "Bearer $key"
+                setBody(json.encodeToString(request(model, temperature)))
             }
 
-            var httpResponse = post(sentTemperature)
+            var httpResponse = post()
             var body = httpResponse.bodyAsText()
             // RETRY WITHOUT TEMPERATURE when the model refuses it. Reasoning models (gpt-6-sol)
             // accept only the default, 1; older ones keep the lower, steadier 0.2. Asking OpenAI
             // rather than keeping a list of model names means a new model needs no change here.
             if (httpResponse.status == HttpStatusCode.BadRequest && rejectsTemperature(body)) {
-                logger.info("$actualModel does not accept temperature $sentTemperature; retrying with its default")
-                sentTemperature = null
-                httpResponse = post(sentTemperature)
+                logger.info("$model does not accept temperature $temperature; retrying with its default")
+                temperature = null
+                httpResponse = post()
                 body = httpResponse.bodyAsText()
             }
-            if (!httpResponse.status.isSuccess()) {
-                logger.error("Failed to complete request to OpenAI: ${httpResponse.status}, $body")
-                throw Exception("Failed to complete request to OpenAI: ${httpResponse.status}, $body")
+            return Attempt(httpResponse.status, body, model, temperature)
+        }
+
+        lateinit var attempt: Attempt
+        val chatCompletionResponse = try {
+            attempt = send(apiKey, actualModel)
+            // FALL BACK to the second key, once, when OpenAI refuses the first one.
+            if (fallback != null && attempt.status.value in KEY_REFUSED) {
+                val fallbackModel = fallback.model ?: actualModel
+                val reason = errorCode(attempt.body)?.let { "${attempt.status}, $it" } ?: "${attempt.status}"
+                logger.warn("OpenAI refused the primary key for $actualModel ($reason); falling back to the fallback key with $fallbackModel")
+                attempt = send(fallback.apiKey, fallbackModel)
+            }
+            if (!attempt.status.isSuccess()) {
+                logger.error("Failed to complete request to OpenAI: ${attempt.status}, ${attempt.body}")
+                throw Exception("Failed to complete request to OpenAI: ${attempt.status}, ${attempt.body}")
             }
 
-            json.decodeFromString<ChatCompletionResponse>(body)
+            json.decodeFromString<ChatCompletionResponse>(attempt.body)
         } catch (e: SerializationException) {
             logger.error("Failed to parse response from OpenAI", e)
             throw e
@@ -117,12 +144,21 @@ class OpenAI(
 
         return CompletionData(
             prompt = prompt,
-            temperature = sentTemperature ?: OPENAI_DEFAULT_TEMPERATURE,
+            temperature = attempt.temperature ?: OPENAI_DEFAULT_TEMPERATURE,
             maxTokens = actualMaxTokens,
             images = imagesBase64,
-            model = actualModel,
+            model = attempt.model,
             response = chatCompletionResponse.choices.first().message.content,
         )
+    }
+
+    private class Attempt(val status: HttpStatusCode, val body: String, val model: String, val temperature: Float?)
+
+    /** OpenAI's error code, e.g. `insufficient_quota` or `model_not_found`, when the body has one. */
+    private fun errorCode(body: String): String? {
+        val error = runCatching { json.parseToJsonElement(body).jsonObject["error"]?.jsonObject }
+            .getOrNull() ?: return null
+        return (error["code"] ?: error["type"])?.jsonPrimitive?.contentOrNull
     }
 
     /** OpenAI's 400 for a parameter value the model does not support, naming `temperature`. */

@@ -40,6 +40,10 @@ abstract class AI(
     companion object {
         const val AI_KEY_ENV_VAR = "MAESTRO_CLI_AI_KEY"
         const val AI_MODEL_ENV_VAR = "MAESTRO_CLI_AI_MODEL"
+        // Optional second OpenAI key (and its model, if it needs another one), tried once when
+        // OpenAI refuses the first: see OpenAI.Fallback.
+        const val AI_KEY_FALLBACK_ENV_VAR = "MAESTRO_CLI_AI_KEY_FALLBACK"
+        const val AI_MODEL_FALLBACK_ENV_VAR = "MAESTRO_CLI_AI_MODEL_FALLBACK"
 
         val defaultHttpClient = HttpClient {
             install(ContentNegotiation) {
