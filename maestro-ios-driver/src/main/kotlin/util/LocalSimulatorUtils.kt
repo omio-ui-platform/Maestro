@@ -432,9 +432,14 @@ class LocalSimulatorUtils(private val tempFileHandler: TempFileHandler) {
         if (source.extension.equals("pdf", ignoreCase = true)) {
             // PDFs belong in Files, not Photos (simctl addmedia only accepts images/videos).
             val metadata = tempFileHandler.createTempFile("files-provider-", ".json")
+            val diagnostics = tempFileHandler.createTempFile("files-provider-", ".log")
             try {
-                runCommand(listOf("xcrun", "simctl", "listapps", deviceId), outputFile = metadata)
-                runCommand(listOf("plutil", "-convert", "json", metadata.absolutePath))
+                runCommand(
+                    listOf("xcrun", "simctl", "listapps", deviceId),
+                    outputFile = metadata,
+                    errorFile = diagnostics,
+                )
+                runCommand(listOf("plutil", "-convert", "json", metadata.absolutePath), outputFile = diagnostics)
                 val group = jacksonObjectMapper().readTree(metadata)
                     .path("com.apple.DocumentsApp").path("GroupContainers")
                     .path("group.com.apple.FileProvider.LocalStorage").asText()
@@ -448,6 +453,7 @@ class LocalSimulatorUtils(private val tempFileHandler: TempFileHandler) {
                 source.copyTo(File(storage, source.name), overwrite = true)
             } finally {
                 metadata.delete()
+                diagnostics.delete()
             }
             return
         }

@@ -23,13 +23,19 @@ class AndroidDriverAddMediaTest {
         val copies = mutableListOf<Pair<File, String>>()
         val commands = mutableListOf<String>()
         var result: SyncResult = SyncResult.Success
+        var broadcastExitCode = 0
         override fun push(src: File, remotePath: String, mode: Int, lastModifiedMs: Long): SyncResult {
             copies.add(src to remotePath)
             return result
         }
         override fun shell(command: String): AdbShellResponse {
             commands.add(command)
-            return mockk { every { exitCode } returns 0; every { output } returns "" }
+            val code = if (command.contains("MEDIA_SCANNER_SCAN_FILE")) broadcastExitCode else 0
+            return mockk {
+                every { exitCode } returns code
+                every { output } returns "scanner unavailable"
+                every { allOutput } returns "scanner unavailable"
+            }
         }
         override fun open(destination: String): AdbStream = error("unexpected open")
         override fun supportsFeature(feature: String) = true
@@ -63,6 +69,13 @@ class AndroidDriverAddMediaTest {
         val error = assertThrows<AndroidOperationFailedException> { driver.addMedia(listOf(fixture("ticket.pdf"))) }
         assertThat(error).hasMessageThat().contains("disk full")
         assertThat(device.commands.none { it.contains("MEDIA_SCANNER_SCAN_FILE") }).isTrue()
+    }
+
+    @Test
+    fun `failed media scanner commands are surfaced to the caller`() {
+        device.broadcastExitCode = 1
+        val error = assertThrows<AndroidOperationFailedException> { driver.addMedia(listOf(fixture("ticket.pdf"))) }
+        assertThat(error).hasMessageThat().contains("scanner unavailable")
     }
 
     @Test

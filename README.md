@@ -135,6 +135,24 @@ This fork contains modifications from the upstream [mobile-dev-inc/Maestro](http
 
 ### Added
 
+#### PDF fixtures with `addMedia`
+
+`addMedia` accepts PDF files as well as images and videos. Android copies PDFs into
+public Downloads; iOS simulators copy them into the Files app's local storage
+(**On My iPhone**). The local Files provider must be available. Filenames are preserved,
+and importing the same PDF name again replaces the existing file.
+
+```yaml
+- addMedia:
+    - ./fixtures/ticket.pdf
+```
+
+Image/video imports retain their existing gallery behavior. Extensions are matched
+case-insensitively. Missing local files fail before iOS device interaction; simulator
+metadata warnings are kept separate from the structured output, and temporary metadata
+and diagnostic files are removed after success or failure. PDF import on physical iOS
+devices is not supported by this simulator implementation.
+
 #### Video Recording & GCS Upload
 
 Screen recording during test execution with automatic upload to Google Cloud Storage for failed tests.

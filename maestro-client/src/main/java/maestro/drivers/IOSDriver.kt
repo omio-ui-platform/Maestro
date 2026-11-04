@@ -57,6 +57,7 @@ import util.XCRunnerCLIUtils
 import xcuitest.crash.IOSCrashFileFinder
 import xcuitest.crash.IPSParser
 import java.io.File
+import java.io.FileNotFoundException
 import java.util.concurrent.TimeUnit
 import kotlin.collections.set
 
@@ -597,6 +598,9 @@ class IOSDriver(
                 ?: throw IllegalArgumentException(
                     "Extension .${mediaFile.extension} is not yet supported for add media"
                 )
+            if (!mediaFile.isFile || !mediaFile.canRead()) {
+                throw FileNotFoundException("Media file is missing or unreadable: ${mediaFile.path}")
+            }
             iosDevice.addMedia(mediaFile.path)
         }
     }

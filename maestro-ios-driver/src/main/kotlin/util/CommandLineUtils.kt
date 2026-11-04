@@ -18,20 +18,21 @@ object CommandLineUtils {
             parts: List<String>,
             waitForCompletion: Boolean = true,
             outputFile: File? = null,
-            params: Map<String, String> = emptyMap()
+            params: Map<String, String> = emptyMap(),
+            errorFile: File? = null
     ): Process {
         logger.info("Running command line operation: $parts with $params")
 
-        val processBuilder =
-                if (outputFile != null) {
-                    ProcessBuilder(*parts.toTypedArray())
-                            .redirectOutput(outputFile)
-                            .redirectError(outputFile)
-                } else {
-                    ProcessBuilder(*parts.toTypedArray())
-                            .redirectOutput(nullFile)
-                            .redirectError(ProcessBuilder.Redirect.PIPE)
-                }
+        val processBuilder = ProcessBuilder(*parts.toTypedArray())
+                .redirectOutput(outputFile ?: nullFile)
+        if (errorFile != null) {
+            processBuilder.redirectError(errorFile)
+        } else if (outputFile != null) {
+            // Preserve combined logs unless the caller needs machine-readable stdout.
+            processBuilder.redirectErrorStream(true)
+        } else {
+            processBuilder.redirectError(ProcessBuilder.Redirect.PIPE)
+        }
 
         processBuilder.environment().putAll(params)
         val process = processBuilder.start()
@@ -42,12 +43,13 @@ object CommandLineUtils {
             }
 
             if (process.exitValue() != 0) {
-                val processOutput = process.errorStream.source().buffer().readUtf8()
+                val processOutput = (errorFile ?: outputFile)?.readText()
+                        ?: process.errorStream.source().buffer().readUtf8()
 
                 logger.error("Process failed with exit code ${process.exitValue()}")
                 logger.error("Error output $processOutput")
 
-                throw IllegalStateException(processOutput)
+                throw IllegalStateException("Command ${parts.first()} failed (exit ${process.exitValue()}): $processOutput")
             }
         }
 

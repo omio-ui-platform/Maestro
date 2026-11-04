@@ -1,4 +1,4 @@
-appId: com.google.android.documentsui
+appId: '${typeof DOCUMENTS_APP_ID === "undefined" ? "com.google.android.documentsui" : DOCUMENTS_APP_ID}'
 tags:
   - passing
   - android

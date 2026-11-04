@@ -11,9 +11,26 @@ import maestro.MaestroException
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import xcuitest.api.DeviceInfo
+import java.io.File
+import java.io.FileNotFoundException
 import java.net.SocketTimeoutException
 
 class IOSDriverTest {
+
+    @Test
+    fun `missing media fails with its filename before contacting the device`() {
+        val device = mockk<IOSDevice>(relaxed = true)
+        maestro.utils.TempFileHandler().use { files ->
+            val root = files.createTempDirectory("missing-media-")
+            val driver = IOSDriver(device)
+            for (extension in listOf("png", "pdf")) {
+                val missing = File(root, "boarding pass.$extension")
+                val error = assertThrows<FileNotFoundException> { driver.addMedia(listOf(missing)) }
+                assertThat(error).hasMessageThat().contains(missing.path)
+            }
+            verify(exactly = 0) { device.addMedia(any()) }
+        }
+    }
 
     @Test
     fun `PDF filenames are accepted and forwarded unchanged to the device`() {

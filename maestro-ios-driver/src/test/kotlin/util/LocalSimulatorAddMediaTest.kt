@@ -16,11 +16,12 @@ class LocalSimulatorAddMediaTest {
     private val files = TempFileHandler()
     private val simulator = LocalSimulatorUtils(files)
     private val root = files.createTempDirectory("pdf-import-")
+    private val capturedFiles = mutableListOf<File>()
     private val group = File(root, "Files container").apply { mkdirs() }
 
     init {
         mockkObject(CommandLineUtils)
-        every { CommandLineUtils.runCommand(match { it.firstOrNull() == "plutil" }) } returns mockk()
+        every { CommandLineUtils.runCommand(match { it.firstOrNull() == "plutil" }, outputFile = any()) } returns mockk()
     }
 
     @AfterEach
@@ -34,9 +35,14 @@ class LocalSimulatorAddMediaTest {
             CommandLineUtils.runCommand(
                 listOf("xcrun", "simctl", "listapps", "device-123"),
                 outputFile = any(),
+                errorFile = any(),
             )
         } answers {
-            thirdArg<File>().writeText(value)
+            val metadata = thirdArg<File>()
+            val diagnostics = arg<File>(4)
+            capturedFiles.addAll(listOf(metadata, diagnostics))
+            metadata.writeText(value)
+            diagnostics.writeText("simctl warning")
             mockk<Process>()
         }
     }
@@ -51,6 +57,8 @@ class LocalSimulatorAddMediaTest {
         simulator.addMedia("device-123", pdf.path)
 
         assertThat(File(group, "File Provider Storage/boarding pass.PDF").readText()).isEqualTo("updated PDF")
+        assertThat(capturedFiles).hasSize(4)
+        assertThat(capturedFiles.none { it.exists() }).isTrue()
     }
 
     @Test
@@ -59,6 +67,7 @@ class LocalSimulatorAddMediaTest {
         val pdf = File(root, "ticket.pdf").apply { writeText("PDF") }
 
         assertThrows<IllegalStateException> { simulator.addMedia("device-123", pdf.path) }
+        assertThat(capturedFiles.none { it.exists() }).isTrue()
     }
 
     @Test
