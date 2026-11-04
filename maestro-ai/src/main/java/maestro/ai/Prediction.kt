@@ -40,7 +40,6 @@ object Prediction {
         languageTag: String,
         screen: ByteArray,
         ignore: List<String>,
-        onScreenText: String?,
     ): List<LanguageViolation> {
         if (aiClient == null) return listOf()
         // Structured output is an OpenAI feature; the Claude client drops `jsonSchema` silently
@@ -53,7 +52,7 @@ object Prediction {
                     "${aiClient::class.simpleName}. Structured JSON output is not implemented for it."
             )
         }
-        return openApi.assertLanguageWithAi(aiClient, language, languageTag, screen, ignore, onScreenText).violations
+        return openApi.assertLanguageWithAi(aiClient, language, languageTag, screen, ignore).violations
     }
 
     suspend fun extractText(

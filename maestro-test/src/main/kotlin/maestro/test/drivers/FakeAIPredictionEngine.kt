@@ -25,7 +25,6 @@ class FakeAIPredictionEngine(
         val language: String,
         val languageTag: String,
         val ignore: List<String>,
-        val onScreenText: String?,
     )
 
     override suspend fun assertLanguage(
@@ -34,9 +33,8 @@ class FakeAIPredictionEngine(
         language: String,
         languageTag: String,
         ignore: List<String>,
-        onScreenText: String?,
     ): List<LanguageViolation> {
-        assertLanguageCalls += AssertLanguageCall(language, languageTag, ignore, onScreenText)
+        assertLanguageCalls += AssertLanguageCall(language, languageTag, ignore)
         return violations
     }
 
