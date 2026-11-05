@@ -32,7 +32,6 @@ import maestro.Filters
 import maestro.KeyCode
 import maestro.MaestroException
 import maestro.MediaExt
-import maestro.NamedSource
 import maestro.Point
 import maestro.ScreenRecording
 import maestro.SwipeDirection
@@ -52,13 +51,13 @@ import maestro.utils.NoopInsights
 import maestro.utils.ScreenshotUtils
 import maestro.utils.TempFileHandler
 import okio.Sink
-import okio.source
 import org.slf4j.LoggerFactory
 import util.LocalSimulatorUtils
 import util.XCRunnerCLIUtils
 import xcuitest.crash.IOSCrashFileFinder
 import xcuitest.crash.IPSParser
 import java.io.File
+import java.io.FileNotFoundException
 import java.util.concurrent.TimeUnit
 import kotlin.collections.set
 
@@ -595,17 +594,14 @@ class IOSDriver(
 
     private fun addMediaToDevice(mediaFile: File) {
         metrics.measured("operation", mapOf("command" to "addMediaToDevice")) {
-            val namedSource = NamedSource(
-                mediaFile.name,
-                mediaFile.source(),
-                mediaFile.extension,
-                mediaFile.path
-            )
-            MediaExt.values().firstOrNull { mediaExt -> mediaExt.extName == namedSource.extension }
+            MediaExt.values().firstOrNull { it.extName.equals(mediaFile.extension, ignoreCase = true) }
                 ?: throw IllegalArgumentException(
-                    "Extension .${namedSource.extension} is not yet supported for add media"
+                    "Extension .${mediaFile.extension} is not yet supported for add media"
                 )
-            iosDevice.addMedia(namedSource.path)
+            if (!mediaFile.isFile || !mediaFile.canRead()) {
+                throw FileNotFoundException("Media file is missing or unreadable: ${mediaFile.path}")
+            }
+            iosDevice.addMedia(mediaFile.path)
         }
     }
 

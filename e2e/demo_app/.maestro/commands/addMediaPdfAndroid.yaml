@@ -1,0 +1,14 @@
+appId: '${typeof DOCUMENTS_APP_ID === "undefined" ? "com.google.android.documentsui" : DOCUMENTS_APP_ID}'
+tags:
+  - passing
+  - android
+---
+- addMedia:
+    - ../assets/Maestro sample.pdf
+# Re-importing replaces the same document instead of requiring a clean device.
+- addMedia:
+    - ../assets/Maestro sample.pdf
+- launchApp
+- tapOn: Show roots
+- tapOn: Downloads
+- assertVisible: Maestro sample.pdf

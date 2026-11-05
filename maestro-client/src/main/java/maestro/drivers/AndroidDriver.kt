@@ -1028,16 +1028,18 @@ class AndroidDriver(
     }
 
     private fun addMediaToDevice(mediaFile: File) {
-        val namedSource = NamedSource(
-            mediaFile.name,
-            mediaFile.source(),
-            mediaFile.extension,
-            mediaFile.path
-        )
-        val ext =
-            MediaExt.values().firstOrNull { it.extName == namedSource.extension } ?: throw IllegalArgumentException(
-                "Extension .${namedSource.extension} is not yet supported for add media"
-            )
+        val ext = MediaExt.values().firstOrNull { it.extName.equals(mediaFile.extension, ignoreCase = true) }
+            ?: throw IllegalArgumentException("Extension .${mediaFile.extension} is not yet supported for add media")
+        if (ext == MediaExt.PDF) {
+            // Document pickers browse Downloads; PDFs must not be inserted into the photo library.
+            val destination = "/sdcard/Download/${mediaFile.name}"
+            shell("mkdir -p /sdcard/Download")
+            connection.push(mediaFile, destination).orThrowOnFailure()
+            val uri = java.net.URI("file", "", destination, null).toASCIIString().replace("'", "'\\''")
+            shell("am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d '$uri'")
+            return
+        }
+        val namedSource = NamedSource(mediaFile.name, mediaFile.source(), ext.extName, mediaFile.path)
 
         connection.stream("addMedia") { asyncStub ->
             val responseObserver = BlockingStreamObserver<MaestroAndroid.AddMediaResponse>()
