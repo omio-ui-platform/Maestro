@@ -4,8 +4,8 @@ import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import maestro.utils.MaestroTimer
 import maestro.utils.TempFileHandler
-import org.rauschig.jarchivelib.ArchiveFormat
-import org.rauschig.jarchivelib.ArchiverFactory
+import com.hominux.compress4j.ExtractionLimits
+import com.hominux.compress4j.archivers.zip.ZipArchiveExtractor
 import org.slf4j.LoggerFactory
 import util.CommandLineUtils.runCommand
 import java.io.File
@@ -13,8 +13,10 @@ import java.io.InputStream
 import java.lang.ProcessBuilder.Redirect.PIPE
 import java.nio.file.Files
 import java.nio.file.Path
+import java.time.Instant
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
+import java.util.concurrent.TimeUnit
 import kotlin.io.path.Path
 
 class LocalSimulatorUtils(private val tempFileHandler: TempFileHandler) {
@@ -117,8 +119,16 @@ class LocalSimulatorUtils(private val tempFileHandler: TempFileHandler) {
         awaitShutdown(deviceId)
     }
 
-    fun launchSimulator(deviceId: String) {
-        val simulatorPath = "${xcodePath()}/Applications/Simulator.app"
+    fun launchSimulator(
+        deviceId: String,
+        simulatorApp: File = File(xcodePath(), "Applications/Simulator.app"),
+    ) {
+        // Xcode 27 ships without Simulator.app. Callers boot via simctl first; the window is optional.
+        if (!simulatorApp.exists()) {
+            logger.warn("Simulator.app not found at ${simulatorApp.path}, the simulator will run without a window")
+            return
+        }
+
         var exceptionToThrow: Exception? = null
 
         // Up to 10 iterations => max wait time of 1 second
@@ -128,7 +138,7 @@ class LocalSimulatorUtils(private val tempFileHandler: TempFileHandler) {
                     listOf(
                         "open",
                         "-a",
-                        simulatorPath,
+                        simulatorApp.path,
                         "--args",
                         "-CurrentDeviceUDID",
                         deviceId
@@ -184,6 +194,7 @@ class LocalSimulatorUtils(private val tempFileHandler: TempFileHandler) {
                 )
             )
         }.onFailure { error ->
+            if (error is InterruptedException) throw error
             val isExpectedError = error.message?.let { msg ->
                 msg.contains("found nothing to terminate") ||
                 msg.contains("Unable to lookup in current state: Shutdown")
@@ -270,8 +281,12 @@ class LocalSimulatorUtils(private val tempFileHandler: TempFileHandler) {
 
             logger.info("Reinstalling and launching $bundleId")
             uninstall(deviceId, bundleId)
-            install(deviceId, tmpBundlePath)
-            deleteFolderRecursively(tmpBundlePath.toFile())
+            try {
+                install(deviceId, tmpBundlePath)
+                refreshAssociatedDomains(deviceId, bundleId, tmpBundlePath)
+            } finally {
+                deleteFolderRecursively(tmpBundlePath.toFile())
+            }
             logger.info("App $bundleId reinstalled and launched")
         } else {
             throw SimctlError("Could not find app binary for bundle $bundleId at $pathToBinary")
@@ -293,6 +308,34 @@ class LocalSimulatorUtils(private val tempFileHandler: TempFileHandler) {
         // reinstall and leak into the next test (e.g. the app stays logged in). Reset the
         // keychain too so clearState yields a genuinely brand-new app instance.
         clearKeychain(deviceId)
+    }
+
+    private val associatedDomainsRefresher = AssociatedDomainsRefresher(::runtimeVersion, ::openURL, ::terminate)
+
+    // Best effort: a failure here must not fail clearState, but cancellation still propagates.
+    // See AssociatedDomainsRefresher.
+    private fun refreshAssociatedDomains(deviceId: String, bundleId: String, appBundle: Path) {
+        try {
+            associatedDomainsRefresher.refresh(deviceId, bundleId, appBundle)
+        } catch (e: InterruptedException) {
+            throw e
+        } catch (e: Exception) {
+            logger.warn("Could not refresh associated domains for $bundleId", e)
+        }
+    }
+
+    private fun runtimeVersion(deviceId: String): String? {
+        val process = ProcessBuilder("xcrun", "simctl", "getenv", deviceId, "SIMULATOR_RUNTIME_VERSION")
+            .redirectError(ProcessBuilder.Redirect.DISCARD)
+            .start()
+        try {
+            if (!process.waitFor(10, TimeUnit.SECONDS)) return null
+            val version = String(process.inputStream.readBytes()).trim()
+            return version.takeIf { process.exitValue() == 0 && it.isNotEmpty() }
+                ?: null.also { logger.warn("Could not read the iOS runtime version of $deviceId") }
+        } finally {
+            if (process.isAlive) process.destroyForcibly()
+        }
     }
 
     private fun getAppBinaryDirectory(deviceId: String, bundleId: String): String {
@@ -673,9 +716,11 @@ class LocalSimulatorUtils(private val tempFileHandler: TempFileHandler) {
     fun install(deviceId: String, stream: InputStream) {
         val extractDir = tempFileHandler.createTempDirectory()
 
-        ArchiverFactory
-            .createArchiver(ArchiveFormat.ZIP)
-            .extract(stream, extractDir)
+        ZipArchiveExtractor.streaming(stream)
+            .overwrite(true)
+            .maxRatio(ExtractionLimits.UNLIMITED)
+            .build()
+            .use { it.extract(extractDir.toPath()) }
 
         val app = extractDir.walk()
             .filter { it.name.endsWith(".app") }
@@ -695,6 +740,8 @@ class LocalSimulatorUtils(private val tempFileHandler: TempFileHandler) {
     data class ScreenRecording(
         val process: Process,
         val file: File,
+        /** When the script reported the recording live (simctl had created the output file). */
+        val startedAt: Instant,
     )
 
     fun startScreenRecording(deviceId: String): ScreenRecording {
@@ -721,6 +768,8 @@ class LocalSimulatorUtils(private val tempFileHandler: TempFileHandler) {
 
             val firstLine = recordingProcess.inputStream.bufferedReader().readLine()
 
+            val startedAt = Instant.now()
+
             if (firstLine == null || !firstLine.startsWith("RECORDING_STARTED")) {
                 recordingProcess.waitFor()
                 throw SimctlError(
@@ -730,7 +779,8 @@ class LocalSimulatorUtils(private val tempFileHandler: TempFileHandler) {
 
             return ScreenRecording(
                 recordingProcess,
-                recording
+                recording,
+                startedAt,
             )
         } else {
             throw IllegalStateException("screenrecord.sh file not found")

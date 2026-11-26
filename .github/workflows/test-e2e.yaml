@@ -14,6 +14,7 @@ on:
           - 'android-34'
           - 'android-35'
           - 'android-36'
+          - 'android-37'
       app:
         description: 'App workspace to test (e.g. demo_app, simple_web_view). Empty = all apps.'
         type: string
@@ -38,6 +39,9 @@ on:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}-${{ inputs.android_version || '' }}-${{ inputs.platform || '' }}-${{ inputs.app || '' }}-${{ inputs.flow || '' }}
   cancel-in-progress: true
+
+env:
+  MAESTRO_CLI_NO_ANALYTICS: 1
 
 jobs:
   validate-inputs:
@@ -187,10 +191,12 @@ jobs:
   build:
     name: Build on ${{ matrix.os }}
     needs: [validate-inputs, detect-changes, validate-manifest]
-    # always() keeps the build running when validate-inputs is skipped, which it is on every
+    # !cancelled() keeps the build running when validate-inputs is skipped, which it is on every
     # pull request — but it also means a failed dependency is ignored unless named here. Anything
-    # added to needs above must be asserted below, or it gates nothing.
-    if: ${{ always() && (needs.validate-inputs.result == 'success' || needs.validate-inputs.result == 'skipped') && needs.validate-manifest.result == 'success' }}
+    # added to needs above must be asserted below, or it gates nothing. Not always(): GitHub won't
+    # cancel a running job whose if: is still true, and always() is true even after a cancel, so a
+    # superseded run would keep running to the end and hold up the next one.
+    if: ${{ !cancelled() && (needs.validate-inputs.result == 'success' || needs.validate-inputs.result == 'skipped') && needs.validate-manifest.result == 'success' }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
 
@@ -247,7 +253,7 @@ jobs:
     name: Test on Web
     runs-on: ubuntu-latest
     needs: [build, validate-inputs]
-    if: ${{ always() && needs.build.result == 'success' && (needs.validate-inputs.result == 'success' || needs.validate-inputs.result == 'skipped') && (github.event_name == 'pull_request' || inputs.platform == 'web') && inputs.flow == '' }}
+    if: ${{ !cancelled() && needs.build.result == 'success' && (needs.validate-inputs.result == 'success' || needs.validate-inputs.result == 'skipped') && (github.event_name == 'pull_request' || inputs.platform == 'web') && inputs.flow == '' }}
 
     # MAESTRO_APP is deliberately not passed: the app input names an app workspace, and the
     # only web workspace has no app. Passing the input's demo_app default would filter the run
@@ -303,18 +309,32 @@ jobs:
     name: Test on Android
     runs-on: ubuntu-latest
     needs: [build, validate-inputs]
-    if: ${{ always() && needs.build.result == 'success' && (needs.validate-inputs.result == 'success' || needs.validate-inputs.result == 'skipped') && (github.event_name == 'pull_request' || inputs.platform == 'android') }}
+    if: ${{ !cancelled() && needs.build.result == 'success' && (needs.validate-inputs.result == 'success' || needs.validate-inputs.result == 'skipped') && (github.event_name == 'pull_request' || inputs.platform == 'android') }}
     timeout-minutes: 60
 
     env:
       ANDROID_HOME: /home/runner/androidsdk
       ANDROID_SDK_ROOT: /home/runner/androidsdk
-      ANDROID_AVD_HOME: /home/runner/.config/.android/avd/
-      ANDROID_OS_IMAGE: system-images;${{ inputs.android_version || 'android-32' }};google_apis;x86_64
+      # Pin the prefs root: without it the tooling falls back to
+      # $XDG_CONFIG_HOME/.android once that exists, which the Gradle run behind
+      # a demo_app cache miss creates, and the AVD lands somewhere else.
+      ANDROID_PREFS_ROOT: /home/runner
+      ANDROID_AVD_HOME: /home/runner/.android/avd/
       MAESTRO_APP: ${{ inputs.app }}
       MAESTRO_FLOW_PATH: ${{ needs.validate-inputs.outputs.flow_path }}
 
     steps:
+      - name: Resolve Android system image
+        run: |
+          version="${{ inputs.android_version || 'android-32' }}"
+          # API 37 only ships a 16 KB page-size (ps16k) image.
+          case "$version" in
+            android-37) image="system-images;android-37.1;google_apis_ps16k;x86_64" ;;
+            *)          image="system-images;$version;google_apis;x86_64" ;;
+          esac
+          echo "Resolved $version -> $image"
+          echo "ANDROID_OS_IMAGE=$image" >> "$GITHUB_ENV"
+
       - name: Enable KVM group perms
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -334,7 +354,8 @@ jobs:
       - name: Set up Android Command-line Tools
         run: |
           # v13 - see https://stackoverflow.com/a/78890086/7009800
-          sh .github/scripts/install_android_sdk https://dl.google.com/android/repository/commandlinetools-linux-12266719_latest.zip
+          # 12.x writes target=android-0 for API 37 (breaks gfxstream); use a current build.
+          sh .github/scripts/install_android_sdk https://dl.google.com/android/repository/commandlinetools-linux-15859902_latest.zip
           echo "$ANDROID_HOME/cmdline-tools/latest/bin:$PATH" >> $GITHUB_PATH
 
       - name: Set up Android SDK components
@@ -385,10 +406,10 @@ jobs:
           
           echo "HOME=$HOME"
           
-          cat << EOF >> ~/.config/.android/avd/MyAVD.avd/config.ini
+          cat << EOF >> ~/.android/avd/MyAVD.avd/config.ini
           hw.cpu.ncore=4
           hw.gpu.enabled=yes
-          hw.gpu.mode=swiftshader_indirect
+          hw.gpu.mode=swiftshader
           hw.ramSize=4192
           disk.dataPartition.size=6442450944
           vm.heapSize=112M
@@ -399,10 +420,14 @@ jobs:
 
       - name: Run AVD
         run: |
-          emulator @MyAVD \
-            -verbose -no-snapshot -no-window -no-audio -no-boot-anim -accel on -no-metrics -camera-back emulated \
-            >~/emulator_stdout.log \
-            2>~/emulator_stderr.log &
+          # The subshell records how the emulator exits, for the diagnostics uploaded on failure.
+          (
+            emulator @MyAVD \
+              -verbose -no-snapshot -no-window -no-audio -no-boot-anim -accel on -no-metrics -camera-back emulated \
+              >~/emulator_stdout.log \
+              2>~/emulator_stderr.log
+            echo "emulator exited with status $? at $(date -u +%FT%TZ)" > ~/emulator_exit.txt
+          ) &
 
       - name: Wait for AVD to start up and configure CI pre-conditions
         run: bash .github/scripts/setup_android_device.sh
@@ -425,11 +450,30 @@ jobs:
           retention-days: 7
           include-hidden-files: true
 
+      - name: Collect emulator diagnostics
+        if: failure()
+        run: |
+          mkdir -p ~/emulator-diagnostics
+          cp ~/emulator_stdout.log ~/emulator_stderr.log ~/emulator-diagnostics/ 2>/dev/null || true
+          cp ~/emulator_exit.txt ~/emulator-diagnostics/ 2>/dev/null \
+            || echo "emulator still running" > ~/emulator-diagnostics/emulator_exit.txt
+          # The kernel logs which library a crashing process died in.
+          sudo dmesg -T > ~/emulator-diagnostics/dmesg.txt 2>&1 || true
+          timeout 30 adb logcat -d > ~/emulator-diagnostics/logcat.txt 2>&1 || true
+
+      - name: Upload emulator diagnostics
+        uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: emulator-diagnostics-android
+          path: ~/emulator-diagnostics
+          retention-days: 7
+
   test-ios:
     name: Test on iOS
     runs-on: macos-26
     needs: [build, validate-inputs]
-    if: ${{ always() && needs.build.result == 'success' && (needs.validate-inputs.result == 'success' || needs.validate-inputs.result == 'skipped') && (github.event_name == 'pull_request' || inputs.platform == 'ios') && inputs.flow == '' }}
+    if: ${{ !cancelled() && needs.build.result == 'success' && (needs.validate-inputs.result == 'success' || needs.validate-inputs.result == 'skipped') && (github.event_name == 'pull_request' || inputs.platform == 'ios') && inputs.flow == '' }}
     timeout-minutes: 120
 
     env:
@@ -506,6 +550,18 @@ jobs:
         # maestro-ios-xctest-runner/maestro-driver-iosUITests/Categories/
         # XCUIApplication+Helper.m regresses.
         run: ./e2e/alert-repro-swiftui/verify_preflight_suppressed.sh "$SIM_UDID"
+
+      - name: Verify the iOS app-crash signal on the simulator
+        # The crash signal is read from the simulator's own log and from the crash
+        # report macOS writes, neither of which a unit test can fake faithfully.
+        # Runs IOSDriver.findAppCrash against this job's simulator and the demo app
+        # installed above; the same test is skipped wherever
+        # MAESTRO_TEST_SIMULATOR_UDID is not set.
+        # Runs even if the flows above failed: it does not depend on them.
+        if: success() || failure()
+        env:
+          MAESTRO_TEST_SIMULATOR_UDID: ${{ env.SIM_UDID }}
+        run: ./gradlew :maestro-client:test --tests 'maestro.drivers.IOSDriverCrashSimulatorTest' -x :maestro-ios-driver:buildIosDriver
 
       - name: Stop screen recording
         if: success() || failure()
@@ -586,7 +642,7 @@ jobs:
     name: Verify CLI version on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     needs: build
-    if: ${{ always() && needs.build.result == 'success' }}
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
     timeout-minutes: 10
 
     strategy:
@@ -646,6 +702,10 @@ jobs:
   # platform jobs never ran) into a red gate. Scoped to pull_request because that is the only event
   # that gates a merge; a single-platform workflow_dispatch would otherwise fail the gate on the two
   # platforms it intentionally skipped.
+  #
+  # This is the one job that keeps always(), and so still runs after a cancel. That takes seconds,
+  # and it reports the cancelled platform jobs as a red gate, which is what a required check should
+  # do. The jobs it waits on use !cancelled() instead, so a cancel stops them.
   e2e-gate:
     name: E2E gate
     runs-on: ubuntu-latest

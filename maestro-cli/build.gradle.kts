@@ -194,7 +194,7 @@ dependencies {
     implementation(libs.ktor.server.netty)
     implementation(libs.ktor.server.cors)
     implementation(libs.ktor.server.status.pages)
-    implementation(libs.jarchivelib)
+    implementation(libs.compress4j)
     implementation(libs.commons.codec)
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.html)
@@ -352,6 +352,7 @@ tasks.named("compileKotlin", KotlinCompilationTask::class.java) {
 
 tasks.named<Test>("test") {
     useJUnitPlatform()
+    environment("MAESTRO_CLI_NO_ANALYTICS", "1")
 }
 
 tasks.create("createProperties") {

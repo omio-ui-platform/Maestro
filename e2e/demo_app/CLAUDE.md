@@ -57,12 +57,16 @@ maestro test --include-tags passing .maestro/
 | `sensors_screen.dart` | Device sensors (Android only) |
 | `webview.dart` | Embedded WebView via `webview_flutter` |
 | `defects_screen.dart` | Intentional UI quirks for defect regression |
+| `crash_screen.dart` | Ends the app's process for real (iOS only, via native code): "Crash the app" with a fault signal, "Exit the app" normally. Launch argument `crashScreen: crash` or `crashScreen: exit` opens it and ends the app without a tap |
+| `photo_picker_screen.dart` | Opens the native iOS photo pickers (`UIImagePickerController`, `PHPickerViewController`) from a screen with a text field, so a flow can open them with the keyboard up (iOS only, via native code) |
 | `cropped_screenshot_screen.dart` | Screenshot cropping edge cases |
 | `notifications_permission_screen.dart` | Permission request flows |
 | `permission_check_screen.dart` | Passively displays permission status (location, all-files) via `permission_handler` — never calls `requestPermission()`, so it reflects a pre-granted state deterministically |
 | `issue_1619_repro.dart`, `issue_1677_repro.dart` | Bug reproductions |
 
 The app reads launch arguments via `flutter_launch_arguments` (e.g., `initialCounter`, `delay`) so Maestro flows can configure app state at launch.
+
+**Launch argument `slowSplashHandoff: <ms>` (Android 12+):** read in `MainActivity.kt`. `2500` leaves a window animation running for the life of the activity (used by `slow_splash_handoff.yaml`).
 
 ### Maestro Flows (`.maestro/`)
 
