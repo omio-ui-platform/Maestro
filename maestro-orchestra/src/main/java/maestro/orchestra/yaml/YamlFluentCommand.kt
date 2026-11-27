@@ -88,6 +88,7 @@ import maestro.orchestra.error.MediaFileNotFound
 import maestro.orchestra.error.SyntaxError
 import maestro.orchestra.util.Env.withEnv
 import maestro.orchestra.workspace.SharedFlowResolver
+import maestro.utils.FileAccessScope
 import java.nio.file.Path
 import kotlin.io.path.absolutePathString
 import kotlin.io.path.exists
@@ -166,16 +167,17 @@ data class YamlFluentCommand(
     @JsonIgnore val _sourceInfo: SourceInfo,
 ) {
 
-    fun toCommands(flowPath: Path, appId: String): List<MaestroCommand> {
+    fun toCommands(context: ResolutionContext): List<MaestroCommand> {
         return try {
-            _toCommands(flowPath, appId).map { it.copy(sourceInfo = _sourceInfo) }
+            _toCommands(context).map { it.copy(sourceInfo = _sourceInfo) }
         } catch (e: Throwable) {
             throw ToCommandsException(e, _sourceInfo)
         }
     }
 
     @SuppressWarnings("ComplexMethod")
-    private fun _toCommands(flowPath: Path, appId: String): List<MaestroCommand> {
+    private fun _toCommands(context: ResolutionContext): List<MaestroCommand> {
+        val appId = context.appId
         return when {
             launchApp != null -> listOf(launchApp(launchApp, appId))
             setPermissions != null -> listOf(setPermissions(command = setPermissions, appId))
@@ -293,7 +295,7 @@ data class YamlFluentCommand(
             )
 
             extractComponentWithAI != null -> {
-                val resolvedImagePath = resolveComponentImagePath(flowPath, extractComponentWithAI.image)
+                val resolvedImagePath = resolveComponentImagePath(context.flowPath, extractComponentWithAI.image)
                 listOf(
                     MaestroCommand(
                         ExtractComponentWithAICommand(
@@ -314,13 +316,13 @@ data class YamlFluentCommand(
                         cropOn = assertScreenshot.cropOn?.let { toElementSelector(it) },
                         optional = assertScreenshot.optional,
                         label = assertScreenshot.label,
-                        flowPath = flowPath.parent,
+                        flowPath = context.flowPath.parent,
                     )
                 )
             )
             addMedia != null -> listOf(
                 MaestroCommand(
-                    addMediaCommand = addMediaCommand(addMedia, flowPath)
+                    addMediaCommand = addMediaCommand(addMedia, context)
                 )
             )
             inputText != null -> listOf(MaestroCommand(InputTextCommand(text = inputText.text, label = inputText.label, optional = inputText.optional)))
@@ -439,7 +441,7 @@ data class YamlFluentCommand(
                 )
             )
 
-            runFlow != null -> listOf(runFlowCommand(appId, flowPath, runFlow))
+            runFlow != null -> listOf(runFlowCommand(context, runFlow))
             setLocation != null -> listOf(
                 MaestroCommand(
                     SetLocationCommand(
@@ -463,11 +465,11 @@ data class YamlFluentCommand(
             )
             
             repeat != null -> listOf(
-                repeatCommand(repeat, flowPath, appId)
+                repeatCommand(repeat, context)
             )
 
             retry != null -> listOf(
-                retryCommand(retry, flowPath, appId)
+                retryCommand(retry, context)
             )
 
             copyTextFrom != null -> listOf(copyTextFromCommand(copyTextFrom))
@@ -481,7 +483,7 @@ data class YamlFluentCommand(
                 )
             )
             runScript != null -> {
-                val scriptPath = resolvePath(flowPath, runScript.file)
+                val scriptPath = resolvePath(context, runScript.file)
                 listOf(
                     MaestroCommand(
                         RunScriptCommand(
@@ -615,21 +617,15 @@ data class YamlFluentCommand(
         }
     }
 
-    private fun addMediaCommand(addMedia: YamlAddMedia, flowPath: Path): AddMediaCommand {
+    private fun addMediaCommand(addMedia: YamlAddMedia, context: ResolutionContext): AddMediaCommand {
         if (addMedia.files == null || addMedia.files.any { it == null }) {
             throw SyntaxError("Invalid addMedia command: media files cannot be empty")
         }
 
         val mediaPaths = addMedia.files.filterNotNull().map {
-            val path = flowPath.fileSystem.getPath(it)
-
-            val resolvedPath = if (path.isAbsolute) {
-                path
-            } else {
-                flowPath.resolveSibling(path).toAbsolutePath().normalize()
-            }
+            val resolvedPath = context.scope.resolve(context.flowPath.anchorDir(), it)
             if (!resolvedPath.exists()) {
-                throw MediaFileNotFound("Media file at $path in flow file: $flowPath not found", path)
+                throw MediaFileNotFound("Media file at $it in flow file: ${context.flowPath} not found", resolvedPath)
             }
             resolvedPath
         }
@@ -637,11 +633,7 @@ data class YamlFluentCommand(
         return AddMediaCommand(mediaAbsolutePathStrings, addMedia.label, addMedia.optional)
     }
 
-    private fun runFlowCommand(
-        appId: String,
-        flowPath: Path,
-        runFlow: YamlRunFlow
-    ): MaestroCommand {
+    private fun runFlowCommand(context: ResolutionContext, runFlow: YamlRunFlow): MaestroCommand {
         if (runFlow.file == null && runFlow.commands == null) {
             throw SyntaxError("Invalid runFlow command: No file or commands provided")
         }
@@ -652,13 +644,13 @@ data class YamlFluentCommand(
 
         val commands = runFlow.commands
             ?.flatMap {
-                it.toCommands(flowPath, appId)
+                it.toCommands(context)
                     .withEnv(runFlow.env)
             }
-            ?: runFlow(flowPath, runFlow)
+            ?: runFlow(context, runFlow)
 
         val config = runFlow.file?.let {
-            readConfig(flowPath, runFlow.file)
+            readConfig(context, runFlow.file)
         }
 
         return MaestroCommand(
@@ -673,7 +665,7 @@ data class YamlFluentCommand(
         )
     }
 
-    private fun retryCommand(retry: YamlRetryCommand, flowPath: Path, appId: String): MaestroCommand {
+    private fun retryCommand(retry: YamlRetryCommand, context: ResolutionContext): MaestroCommand {
         if (retry.file == null && retry.commands == null) {
             throw SyntaxError("Invalid retry command: No file or commands provided")
         }
@@ -684,13 +676,13 @@ data class YamlFluentCommand(
 
         val commands = retry.commands
             ?.flatMap {
-                it.toCommands(flowPath, appId)
+                it.toCommands(context)
                     .withEnv(retry.env)
             }
-            ?: retry(flowPath, retry)
+            ?: retry(context, retry)
 
         val config = retry.file?.let {
-            readConfig(flowPath, retry.file)
+            readConfig(context, retry.file)
         }
 
 
@@ -736,12 +728,12 @@ data class YamlFluentCommand(
         )
     }
 
-    private fun repeatCommand(repeat: YamlRepeatCommand, flowPath: Path, appId: String) = MaestroCommand(
+    private fun repeatCommand(repeat: YamlRepeatCommand, context: ResolutionContext) = MaestroCommand(
         RepeatCommand(
             times = repeat.times,
             condition = repeat.`while`?.toCondition(),
             commands = repeat.commands
-                .flatMap { it.toCommands(flowPath, appId) },
+                .flatMap { it.toCommands(context) },
             label = repeat.label,
             optional = repeat.optional,
         )
@@ -779,40 +771,46 @@ data class YamlFluentCommand(
             return emptyList()
         }
 
-        val runFlowPath = resolvePath(flowPath, runFlow.file)
+        // Watch-file discovery isn't part of the scoped resolution path, so it
+        // always resolves without a bound regardless of the scope used to run the flow.
+        val runFlowPath = resolvePath(flowPath, runFlow.file, FileAccessScope.everything)
         return listOf(runFlowPath) + YamlCommandReader.getWatchFiles(runFlowPath)
     }
 
-    private fun runFlow(flowPath: Path, command: YamlRunFlow): List<MaestroCommand> {
+    private fun runFlow(context: ResolutionContext, command: YamlRunFlow): List<MaestroCommand> {
         if (command.file == null) {
             error("Invalid runFlow command: No file or commands provided")
         }
 
-        val runFlowPath = resolvePath(flowPath, command.file)
-        return YamlCommandReader.readCommands(runFlowPath)
+        val runFlowPath = resolvePath(context, command.file)
+        return YamlCommandReader.readCommands(runFlowPath, context.scope)
             .withEnv(command.env)
     }
 
-    private fun retry(flowPath: Path, command: YamlRetryCommand): List<MaestroCommand> {
+    private fun retry(context: ResolutionContext, command: YamlRetryCommand): List<MaestroCommand> {
         if (command.file == null) {
             error("Invalid runFlow command: No file or commands provided")
         }
 
-        val retryFlowPath = resolvePath(flowPath, command.file)
-        return YamlCommandReader.readCommands(retryFlowPath)
+        val retryFlowPath = resolvePath(context, command.file)
+        return YamlCommandReader.readCommands(retryFlowPath, context.scope)
             .withEnv(command.env)
     }
 
-    private fun readConfig(flowPath: Path, commandFile: String): MaestroConfig? {
-        val runFlowPath = resolvePath(flowPath, commandFile)
-        return YamlCommandReader.readConfig(runFlowPath).toCommand(runFlowPath).applyConfigurationCommand?.config
+    private fun readConfig(context: ResolutionContext, commandFile: String): MaestroConfig? {
+        val runFlowPath = resolvePath(context, commandFile)
+        return YamlCommandReader.readConfig(runFlowPath, context.scope).toCommand(runFlowPath, context.scope).applyConfigurationCommand?.config
     }
 
-    private fun resolvePath(flowPath: Path, requestedPath: String): Path {
-        val path = flowPath.fileSystem.getPath(requestedPath)
+    private fun resolvePath(context: ResolutionContext, requestedPath: String): Path =
+        resolvePath(context.flowPath, requestedPath, context.scope)
 
+    // getRunFlowWatchFiles has no ResolutionContext (it only has a flowPath, and
+    // always resolves with FileAccessScope.everything), so it calls this
+    // flowPath/scope form directly rather than through the context-carrying one above.
+    private fun resolvePath(flowPath: Path, requestedPath: String, scope: FileAccessScope): Path {
         val resolvedPath = if (SharedFlowResolver.isAlias(requestedPath)) {
-            SharedFlowResolver.resolveAlias(flowPath, requestedPath)
+            val aliasPath = SharedFlowResolver.resolveAlias(flowPath, requestedPath)
                 ?: throw InvalidFlowFile(
                     SharedFlowResolver.aliasTarget(flowPath, requestedPath)
                         ?.let { "Shared file \"$requestedPath\" was not found at ${it.toUri()}" }
@@ -821,10 +819,9 @@ data class YamlFluentCommand(
                             "${flowPath.toUri()}"),
                     flowPath
                 )
-        } else if (path.isAbsolute) {
-            path
+            scope.resolve(flowPath.anchorDir(), aliasPath.toString())
         } else {
-            flowPath.resolveSibling(path).toAbsolutePath().normalize()
+            scope.resolve(flowPath.anchorDir(), requestedPath)
         }
         if (resolvedPath.equals(flowPath.toAbsolutePath().normalize())) {
             throw InvalidFlowFile(
@@ -1164,3 +1161,8 @@ data class YamlFluentCommand(
         )
     }
 }
+
+// A single-segment relative path (e.g. "flow.yaml") has no parent; fall back to
+// the filesystem's own empty relative path so the scope still resolves it
+// against the current working directory, the same as a plain relative lookup would.
+private fun Path.anchorDir(): Path = parent ?: fileSystem.getPath("")
