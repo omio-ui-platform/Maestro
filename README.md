@@ -501,6 +501,7 @@ against the upstream commit that squash actually matched (`75e4a03d`), which lef
 - `IOSDriver.kt`, `IOSDriverTest.kt`, `IntegrationTest.kt`, `CHANGELOG.md`, README table of contents: both sides added at the same spot; kept both
 - Driver binaries (`maestro-app.apk`, `maestro-server.apk`, iOS simulator zips): took upstream's. The fork has no Android driver source changes, and its iOS runner changes are build settings (iOS 15 deployment target, build-script root check), not runner code
 - `RunOutputStaysInBundleTest` (new upstream): classified the fork's `assertLanguageWithAI`, `extractPointWithAI`, `extractComponentWithAI`, `setDeviceLocale` and `sleep` as creating no files. `assertVisual` is listed as a known exception: it still writes its baseline and diff images outside the run's bundle
+- `maestro-android` `compileSdk`/`targetSdk` held at 36 instead of upstream's 37 (`378af0c3`): the Jenkins agents lack the API 37 platform and the `maestro-pr-check` build failed with `Failed to find target with hash string 'android-37'`. The driver code uses no API 37 APIs. Move to 37 once CI has the platform
 
 #### 2026-09: sync to upstream v2.10.0 (`75e4a03d`)
 
